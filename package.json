@@ -1,0 +1,32 @@
+{
+  "name": "telegramstats",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Local-first Telegram chat export analyzer",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.14.26",
+    "echarts": "^5.6.0",
+    "echarts-wordcloud": "^2.1.0",
+    "glisse": "^0.6.0",
+    "jszip": "^3.10.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "happy-dom": "^20.14.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.8",
+    "vitest": "^4.1.12"
+  }
+}
