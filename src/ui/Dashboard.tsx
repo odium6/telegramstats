@@ -69,13 +69,20 @@ export function Dashboard({ chat, a, t, media, opts, setOpts, busy, onReset, dar
 
   const chatStart = chat.messages[0]?.ts ?? 0;
   const chatEnd = chat.messages[chat.messages.length - 1]?.ts ?? 0;
-  const preset = opts.from === undefined && opts.to === undefined ? 'all' : 'custom';
+  // Пресеты периода. Выбранный пресет вычисляется из opts, поэтому переключатель
+  // всегда показывает актуальное значение; ручной ввод дат даёт пункт «Свой».
+  const DAY = 86400;
+  const PRESETS: Record<string, number> = { year: 365, '90': 90, '30': 30 };
+  const preset =
+    opts.from === undefined && opts.to === undefined
+      ? 'all'
+      : opts.to === undefined && opts.from !== undefined
+        ? (Object.keys(PRESETS).find((k) => opts.from === chatEnd - PRESETS[k] * DAY) ?? 'custom')
+        : 'custom';
   const setPreset = (p: string) => {
-    const DAY = 86400;
+    if (p === 'custom') return;
     if (p === 'all') setOpts({ ...opts, from: undefined, to: undefined });
-    else if (p === 'year') setOpts({ ...opts, from: chatEnd - 365 * DAY, to: undefined });
-    else if (p === '90') setOpts({ ...opts, from: chatEnd - 90 * DAY, to: undefined });
-    else if (p === '30') setOpts({ ...opts, from: chatEnd - 30 * DAY, to: undefined });
+    else setOpts({ ...opts, from: chatEnd - PRESETS[p] * DAY, to: undefined });
   };
   const fmtDate = (ts: number) => new Date(ts * 1000).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -131,17 +138,20 @@ export function Dashboard({ chat, a, t, media, opts, setOpts, busy, onReset, dar
           <div className="settings card">
             <div className="settings-row">
               <label>Период</label>
-              <SegmentedControl
-                aria-label="Период"
-                value={preset === 'all' ? 'all' : null}
-                onValueChange={setPreset}
-                items={[
-                  { value: 'all', label: 'Всё время' },
-                  { value: 'year', label: 'Год' },
-                  { value: '90', label: '90 дней' },
-                  { value: '30', label: '30 дней' },
-                ]}
-              />
+              <div className="seg-scroll">
+                <SegmentedControl
+                  aria-label="Период"
+                  value={preset}
+                  onValueChange={setPreset}
+                  items={[
+                    { value: 'all', label: 'Всё время' },
+                    { value: 'year', label: 'Год' },
+                    { value: '90', label: '90 дней' },
+                    { value: '30', label: '30 дней' },
+                    ...(preset === 'custom' ? [{ value: 'custom', label: 'Свой' }] : []),
+                  ]}
+                />
+              </div>
               <div className="date-range">
                 <input type="date" value={toDateInput(opts.from ?? chatStart)} min={toDateInput(chatStart)} max={toDateInput(chatEnd)} onChange={(e) => setOpts({ ...opts, from: e.target.value ? new Date(e.target.value + 'T00:00').getTime() / 1000 : undefined })} aria-label="С даты" />
                 <span>—</span>
