@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { Button, SegmentedControl } from 'glisse';
-import { Card, ChartCard, Dot, Stat, useApp } from '../components';
+import { Card, ChartCard, Dot, Stat, useApp, useDocTop } from '../components';
 import { callsMonthlyOption, kindsOption, num } from '../charts';
 import { Lightbox, Thumb, useMediaUrl } from '../MediaView';
 import { colorOf } from '../theme';
@@ -109,18 +109,13 @@ function Gallery({ nameOf }: { nameOf: (k: string) => string }) {
   const listMode = filter === 'voice' || filter === 'audio' || filter === 'file';
 
   const wrap = useRef<HTMLDivElement>(null);
-  const [cols, setCols] = useState(5);
-  useEffect(() => {
-    const el = wrap.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setCols(Math.max(2, Math.floor(el.clientWidth / (filter === 'sticker' || filter === 'round' ? 120 : 170)))));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [filter]);
+  const { top, width } = useDocTop(wrap, [filter]);
+  const cols = Math.max(2, Math.floor((width || 800) / (filter === 'sticker' || filter === 'round' ? 120 : 170)));
   const rows = listMode ? items.length : Math.ceil(items.length / cols);
-  const rowH = listMode ? 64 : (wrap.current?.clientWidth ?? 800) / cols;
-  const v = useWindowVirtualizer({ count: rows, estimateSize: () => rowH, overscan: 4, scrollMargin: wrap.current?.offsetTop ?? 0 });
-  useEffect(() => v.measure(), [rowH, cols, listMode, v]);
+  // высота строки = ширина плитки (квадрат) + зазор 6px
+  const rowH = listMode ? 64 : ((width || 800) - 6 * (cols - 1)) / cols + 6;
+  const v = useWindowVirtualizer({ count: rows, estimateSize: () => rowH, overscan: 3, scrollMargin: top });
+  useEffect(() => v.measure(), [rowH, cols, listMode, top, v]);
 
   return (
     <Card span={12} title={`Галерея · ${num(items.length)}`}>

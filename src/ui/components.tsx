@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { echarts } from './echarts';
 import type { Theme } from './theme';
 import { Icon } from './icons';
@@ -160,4 +160,30 @@ export function Bar({ parts }: { parts: { value: number; color: string; label: s
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
+}
+
+/**
+ * Позиция элемента относительно начала документа (для useWindowVirtualizer).
+ * offsetTop не подходит — он считается от ближайшего позиционированного предка,
+ * и виртуальный список тогда рисует не те строки при прокрутке.
+ */
+export function useDocTop(ref: React.RefObject<HTMLElement | null>, deps: unknown[] = []) {
+  const [top, setTop] = useState(0);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      setTop(Math.round(r.top + window.scrollY));
+      setWidth(el.clientWidth);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(document.body);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return { top, width };
 }

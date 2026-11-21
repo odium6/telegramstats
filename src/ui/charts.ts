@@ -434,7 +434,6 @@ export function durationHistOption(a: Analysis, t: Theme): Opt {
 /* ───────────── текст ───────────── */
 
 export function wordCloudOption(words: Pair[], t: Theme): Opt {
-  const max = words[0]?.[1] ?? 1;
   const palette = t.series.slice(0, 4);
   return {
     ...base(t),
@@ -454,7 +453,9 @@ export function wordCloudOption(words: Pair[], t: Theme): Opt {
         layoutAnimation: true,
         textStyle: { fontFamily: t.font, fontWeight: 600, color: (p: any) => palette[p.dataIndex % palette.length] },
         emphasis: { textStyle: { color: t.text } },
-        data: words.map(([w, c]) => ({ name: w, value: c, textStyle: { opacity: 0.55 + 0.45 * (c / max) } })),
+        // Важно: не задавать textStyle у отдельных слов — echarts-wordcloud 2.x
+        // тогда ничего не рисует. Частота передаётся размером и порядком цвета.
+        data: words.map(([w, c]) => ({ name: w, value: c })),
       },
     ],
   };

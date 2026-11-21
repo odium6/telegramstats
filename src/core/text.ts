@@ -25,15 +25,120 @@ export const STOPWORDS = new Set(
 
 const rx = (src: string) => new RegExp(src, 'iu');
 
-/** Приветствия — признак начала нового разговора. */
-export const GREETING_RE = rx(
-  '(^|[^\\p{L}])(привет\\p{L}*|приветик\\p{L}*|прив|хай|хеллоу|здравствуй\\p{L}*|здарова|здоров[ао]|добр(ое|ый|ой) (утр|день|вечер|ноч)\\p{L}*|утречк\\p{L}*|доброутр\\p{L}*|салют|йоу|ку|q|hi|hello|hey|heya|hiya|good (morning|afternoon|evening)|morning|gm|yo|sup|вітаю|привіт\\p{L}*|добр(ого|ий) (ранку|дня|вечора))(?=$|[^\\p{L}])',
-);
+/* ── Приветствия и «как дела» ────────────────────────────────────────────
+ * Раньше фраза искалась где угодно в тексте, и «А как ты меня отметишь?»
+ * засчитывалось как вопрос о делах. Теперь сообщение режется на отдельные
+ * реплики (по . ! ? , ; переносу строки), у реплики отбрасываются вводные
+ * слова («а», «ну», «слушай», приветствие, ласковое обращение) и хвосты
+ * («там», «сегодня», «вообще»), и остаток должен ЦЕЛИКОМ совпасть с одним
+ * из шаблонов. Лишние слова («…меня отметишь») = не вопрос о делах. */
 
-/** «Как дела» и прочие проявления интереса к собеседнику. */
-export const CHECKIN_RE = rx(
-  '(как (у тебя |у вас )?(дела|делишки|ты|вы|жизнь|день|прошел|прошёл|настроени\\p{L}*|спалось|сам|сама|оно|поживаешь)|ты как|как ты там|чем занят\\p{L}*|что делаешь|че делаешь|чё делаешь|що робиш|як справи|як ти|чем занимаешься|ты где|где ты|ты дома|как добрал\\p{L}*|как самочувствие|how are (you|u)|how r u|hru|wyd|what are you (doing|up to)|how was your|how\'s it going|how is it going|what\'s up|whats up|how have you been|you ok|are you ok)',
+const LEAD = new Set(
+  ('а ну и так слушай кстати ой эй ок окей ладно хорошо да нет вот короче ' +
+    'зай зая зайка заюш солнце солнышко малыш малышка котик котенок кис киса дорогой дорогая милый милая родной родная любимый любимая бро брат братан сестра подруга друг ' +
+    'so and well oh hey hi hello babe baby dear bro honey hun').split(' '),
 );
+const TAIL = new Set(
+  ('то там тут сегодня вообще сейчас щас вчера у тебя вас твои ваши твой твоя вам тебе ' +
+    'зай зая зайка солнце солнышко малыш котик дорогой дорогая милый милая родной родная бро ' +
+    'today now there then babe baby dear bro').split(' '),
+);
+const GREET_WORDS =
+  'привет|приветик|приветики|приветствую|прив|приветули|хай|хей|хэй|хелло|хеллоу|здравствуй|здравствуйте|здарова|здорово|здоров|салют|йоу|ку|вітаю|привіт|hi|hello|hey|heya|hiya|yo|gm|morning|' +
+  'добр(ое|ый|ой|ого|ий) (утро|утречко|день|денек|вечер|вечерок|ночи|ранку|дня|вечора)|утречко|доброутро|good (morning|afternoon|evening)';
+const GREET_START = new RegExp(`^(всем |ну |и тебе |и вам )?(${GREET_WORDS})(?=$| )`, 'u');
+const GREET_ONLY = new RegExp(`^(${GREET_WORDS})$`, 'u');
+
+const CHECKIN_FULL = new RegExp(
+  '^(' +
+    [
+      'как (у тебя |у вас )?(твои |ваши )?(дела|делишки|делища|жизнь|жизнь молодая|настроение|настрой|самочувствие|здоровье|день|денек|выходные|работа|учеба|сам|сама|оно|ты|вы|ты сам|ты сама|поживаешь|поживаете)( у тебя| у вас| твои| в целом| вообще)?',
+      'как (ты|вы) (себя )?(чувствуешь|чувствуете|поживаешь|поживаете)',
+      '(ты|вы) как',
+      'как (тебе )?(спалось|поспал|поспала|выспался|выспалась|ночь|прошла ночь|ночь прошла)',
+      'как (прошел|прошла|прошло) (твой |твоя |твое )?(день|денек|ночь|утро|вечер|выходные|работа|учеба|встреча|поездка)',
+      'как (твой |твоя |твое )?(день|ночь|утро|вечер|выходные|работа|учеба|встреча|поездка) (прошел|прошла|прошло|прошли)',
+      'как (ты )?(добрался|добралась|доехал|доехала|долетел|долетела|сходил|сходила|съездил|съездила|погулял|погуляла|отдохнул|отдохнула)',
+      '(что|че|чё|чо|шо|чем) (ты |вы )?(делаешь|делаете|поделываешь|поделываете|занят|занята|заняты|занимаешься|занимаетесь|там делаешь|там)',
+      'что (у тебя )?нового',
+      '(ты|вы) (в порядке|ок|окей|норм|нормально|живой|живая|жив|жива)',
+      'все (хорошо|нормально|норм|ок|в порядке)',
+      'як (справи|ти|ви|настрій|спалося|день)',
+      '(що|шо) (робиш|робите)',
+      'чим (займаєшся|займаєтеся)',
+      'how (are|r) (you|u|ya)( doing)?',
+      'hru',
+      'how (is|s) (it going|your day|everything|life|work)',
+      'hows (it going|your day|everything|life|work)',
+      'how (was|is) your (day|night|weekend|trip|morning|evening|work)',
+      'how did you sleep',
+      'how have you been',
+      'how do you feel',
+      '(what is|whats|what s) (up|new)',
+      'sup|wyd|wbu|hbu',
+      'what are (you|u) (doing|up to)',
+      '(are )?(you|u) (ok|okay|alright|good)',
+    ].join('|') +
+    ')$',
+  'u',
+);
+/** Эти формулировки — вопрос о делах только если стоит знак вопроса. */
+const NEEDS_QMARK = /^(все (хорошо|нормально|норм|ок|в порядке)|(ты|вы) (в порядке|ок|окей|норм|нормально|живой|живая|жив|жива)|(are )?(you|u) (ok|okay|alright|good))$/u;
+
+interface Clause {
+  words: string[];
+  q: boolean;
+}
+
+function clauses(text: string): Clause[] {
+  const out: Clause[] = [];
+  const re = /([^.!?,;:\n…()]+)([.!?,;:\n…()]*)/g;
+  const low = text.toLowerCase().replace(/ё/g, 'е').replace(/['’]/g, '');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(low))) {
+    const words = m[1].replace(/[^\p{L}\p{N}\s-]/gu, ' ').split(/\s+/).filter(Boolean);
+    if (words.length) out.push({ words, q: m[2].includes('?') });
+  }
+  return out;
+}
+
+function core(words: string[]): string {
+  let a = 0;
+  let b = words.length;
+  // ведущие вводные слова и приветствие («привет как дела»)
+  for (;;) {
+    if (a < b && LEAD.has(words[a])) { a++; continue; }
+    const rest = words.slice(a, b).join(' ');
+    const g = GREET_START.exec(rest);
+    if (g && g[0].length < rest.length) { a += g[0].split(' ').length; continue; }
+    break;
+  }
+  while (b > a && TAIL.has(words[b - 1])) b--;
+  return words.slice(a, b).join(' ');
+}
+
+/** Сообщение содержит самостоятельный вопрос о делах/самочувствии собеседника. */
+export function isCheckin(text: string): boolean {
+  if (!text || text.length > 3000) return false;
+  for (const c of clauses(text)) {
+    if (c.words.length > 9) continue;
+    const s = core(c.words);
+    if (!s || !CHECKIN_FULL.test(s)) continue;
+    if (NEEDS_QMARK.test(s) && !c.q) continue;
+    return true;
+  }
+  return false;
+}
+
+/** Сообщение начинается с приветствия (а не просто содержит слово «привет»). */
+export function isGreeting(text: string): boolean {
+  if (!text) return false;
+  const first = clauses(text)[0];
+  if (!first || first.words.length > 8) return false;
+  let a = 0;
+  while (a < first.words.length && LEAD.has(first.words[a]) && !GREET_ONLY.test(first.words[a])) a++;
+  return GREET_START.test(first.words.slice(a).join(' '));
+}
 
 /** Извинения за задержку — признак отложенного ответа, а не нового разговора. */
 export const DELAY_RE = rx(

@@ -1,7 +1,7 @@
 import type { AnalysisOptions, Chat, Msg, MsgKind } from './types';
 import { makeTz, monthKey, monthKeyToIso, dayKeyToIso, fmtDuration } from './time';
 import {
-  CHECKIN_RE, FAREWELL_RE, GREETING_RE, LAUGH_RE, LOVE_RE, SAD_RE, SMILE_RE, STOPWORDS, SWEAR_RE,
+  FAREWELL_RE, LAUGH_RE, isCheckin, isGreeting, LOVE_RE, SAD_RE, SMILE_RE, STOPWORDS, SWEAR_RE,
   domainOf, emojis, sentiment, tokenize,
 } from './text';
 import { attribute, estimateGap, segment, sharesOf, type Conversation, type GapModel } from './conversations';
@@ -456,12 +456,12 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
     if (SWEAR_RE.test(text)) ps.swears++;
     ps.smiles += (text.match(SMILE_RE) ?? []).length;
     ps.sads += (text.match(SAD_RE) ?? []).length;
-    if (GREETING_RE.test(text)) {
+    if (isGreeting(text)) {
       ps.greetings++;
       if (/(добр\p{L}* утр|утречк|доброутр|good morning|morning|gm|добрий ранок|доброго ранку)/iu.test(text)) ps.morning++;
     }
     if (FAREWELL_RE.test(text) && /(ноч|снов|night|gn|добраніч)/iu.test(text)) ps.goodnight++;
-    if (CHECKIN_RE.test(text)) ps.checkins++;
+    if (isCheckin(text)) ps.checkins++;
     const letters = text.replace(/[^\p{L}]/gu, '');
     if (letters.length >= 4 && letters === letters.toUpperCase() && letters !== letters.toLowerCase()) ps.caps++;
     let prevTok = '';

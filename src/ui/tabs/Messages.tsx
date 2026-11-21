@@ -1,7 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { SearchField, SegmentedControl } from 'glisse';
-import { Card, useApp } from '../components';
+import { Card, useApp, useDocTop } from '../components';
 import { Lightbox, Thumb } from '../MediaView';
 import { colorOf } from '../theme';
 import { kindLabel } from '../../core/analyze';
@@ -61,7 +61,8 @@ export function MessagesTab({ focusId, clearFocus }: { focusId: number | null; c
   const mediaItems = useMemo(() => list.filter((m) => m.media && ['photo', 'video', 'gif', 'round', 'sticker', 'voice', 'audio', 'file'].includes(m.kind)), [list]);
 
   const wrap = useRef<HTMLDivElement>(null);
-  const v = useWindowVirtualizer({ count: list.length, estimateSize: () => 72, overscan: 8, scrollMargin: wrap.current?.offsetTop ?? 0 });
+  const { top } = useDocTop(wrap);
+  const v = useWindowVirtualizer({ count: list.length, estimateSize: () => 72, overscan: 8, scrollMargin: top });
 
   useEffect(() => {
     if (focusId === null) return;

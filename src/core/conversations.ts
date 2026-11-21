@@ -1,5 +1,5 @@
 import type { Msg } from './types';
-import { CHECKIN_RE, DELAY_RE, GREETING_RE } from './text';
+import { DELAY_RE, isCheckin, isGreeting } from './text';
 
 /* ───────────────────────── Кто начинает разговор ─────────────────────────
  *
@@ -202,8 +202,7 @@ export function segment(events: Msg[], T: number, dayOf: (ts: number) => number)
     for (let i = c.start; i <= c.end && i < c.start + 8; i++) {
       const e = events[i];
       if (e.from !== c.opener) break;
-      openText += ' ' + e.text;
-      if (e.kind === 'call') openText += ' [звонок]';
+      openText += '\n' + e.text;
       if (replyTarget === undefined && e.replyTo !== undefined) {
         const ti = idIndex.get(e.replyTo);
         if (ti !== undefined && ti < c.start) replyTarget = events[ti];
@@ -216,8 +215,8 @@ export function segment(events: Msg[], T: number, dayOf: (ts: number) => number)
 
     const r = c.gapBefore / T;
     let z = 0.6 + Math.min(2, 0.9 * Math.log2(Math.max(1, r)));
-    const greet = GREETING_RE.test(openText);
-    const checkin = CHECKIN_RE.test(openText);
+    const greet = isGreeting(openText);
+    const checkin = isCheckin(openText);
     const delay = DELAY_RE.test(openText);
     const isCall = events[c.start].kind === 'call';
 
