@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Analysis } from '../core/analyze';
 import type { AnalysisOptions, Chat, ChatSummary } from '../core/types';
-import { collectFromDrop, collectFromInput, MediaStore, type Collected, type InFile } from '../core/loader';
+import { collectFromDrop, MediaStore, type Collected, type InFile } from '../core/loader';
 import { chatNameFromHtml, parseHtmlPages } from '../core/parseHtml';
 import type { WorkerIn, WorkerOut } from '../worker/analysis.worker';
 import { Landing } from './Landing';
@@ -132,14 +132,14 @@ export function App() {
     setStage({ k: 'ready' });
   };
 
-  const onFiles = async (files: FileList | File[]) => {
+  const onCollected = async (c: Collected) => {
     try {
-      setStage({ k: 'loading', text: 'Сбор файлов…' });
-      await loadCollected(await collectFromInput(files));
+      await loadCollected(c);
     } catch (e) {
       setStage({ k: 'landing', error: String((e as Error).message ?? e) });
     }
   };
+  const onError = (msg: string) => setStage({ k: 'landing', error: msg });
   const onDrop = async (dt: DataTransfer) => {
     try {
       setStage({ k: 'loading', text: 'Сбор файлов…' });
@@ -158,8 +158,7 @@ export function App() {
     setStage({ k: 'loading', text: 'Генерация демо-переписки…' });
     post({ type: 'demo' });
   };
-  const addMedia = async (files: FileList) => {
-    const c = await collectFromInput(files);
+  const addMedia = (c: Collected) => {
     const store = new MediaStore();
     store.merge(media);
     store.merge(c.media);
@@ -176,7 +175,7 @@ export function App() {
   const view = useMemo(() => stage, [stage]);
 
   if (view.k === 'landing' || view.k === 'loading')
-    return <Landing onFiles={onFiles} onDrop={onDrop} onDemo={onDemo} loading={view.k === 'loading' ? view.text : null} error={view.k === 'landing' ? view.error : undefined} dark={dark} toggleTheme={toggle} />;
+    return <Landing onCollected={onCollected} onError={onError} onDrop={onDrop} onDemo={onDemo} loading={view.k === 'loading' ? view.text : null} error={view.k === 'landing' ? view.error : undefined} dark={dark} toggleTheme={toggle} />;
   if (view.k === 'pick')
     return (
       <ChatPicker
@@ -192,6 +191,6 @@ export function App() {
       />
     );
   if (!chat || !analysis)
-    return <Landing onFiles={onFiles} onDrop={onDrop} onDemo={onDemo} loading="Считаю статистику…" dark={dark} toggleTheme={toggle} />;
+    return <Landing onCollected={onCollected} onError={onError} onDrop={onDrop} onDemo={onDemo} loading="Считаю статистику…" dark={dark} toggleTheme={toggle} />;
   return <Dashboard chat={chat} a={analysis} t={t} media={media} opts={opts} setOpts={setOpts} busy={busy} onReset={reset} dark={dark} toggleTheme={toggle} addMedia={addMedia} />;
 }

@@ -139,3 +139,38 @@ export async function collectFromDrop(dt: DataTransfer): Promise<Collected> {
   for (const e of entries) await walk(e, '');
   return classify(await wrapFiles(list));
 }
+
+/* ── File System Access API ──────────────────────────────────────────────
+ * showDirectoryPicker() (Chrome, Edge, Opera, Яндекс) открывает обычный
+ * системный выбор папки, а браузер спрашивает только «разрешить просмотр
+ * файлов» — без пугающего «Upload N files to this site?», который Chrome
+ * показывает для <input webkitdirectory>. Файлы при этом читаются лениво:
+ * в память попадает только то, что реально открывается. */
+
+export const canPickDirectory = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+
+export async function pickDirectory(): Promise<Collected | null> {
+  let dir: any;
+  try {
+    dir = await (window as any).showDirectoryPicker({ id: 'tg-export', mode: 'read', startIn: 'downloads' });
+  } catch (e) {
+    if ((e as DOMException)?.name === 'AbortError') return null; // пользователь закрыл окно
+    throw e;
+  }
+  const files: InFile[] = [];
+  const zips: File[] = [];
+  const walk = async (handle: any, prefix: string): Promise<void> => {
+    for await (const entry of handle.values()) {
+      const path = prefix + entry.name;
+      if (entry.kind === 'directory') await walk(entry, path + '/');
+      else if (/\.zip$/i.test(entry.name)) zips.push(await entry.getFile());
+      else {
+        const fh = entry;
+        files.push({ path, size: 0, get: () => fh.getFile() });
+      }
+    }
+  };
+  await walk(dir, dir.name + '/');
+  for (const z of zips) files.push(...(await expandZip(z)));
+  return classify(files);
+}

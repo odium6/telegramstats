@@ -1,9 +1,12 @@
-import { useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from 'glisse';
 import { Icon } from './icons';
+import { ImportMenu } from './ImportMenu';
+import type { Collected } from '../core/loader';
 
 interface Props {
-  onFiles: (f: FileList | File[]) => void;
+  onCollected: (c: Collected) => void;
+  onError: (msg: string) => void;
   onDrop: (dt: DataTransfer) => void;
   onDemo: () => void;
   loading: string | null;
@@ -21,13 +24,53 @@ const FEATURES = [
   { icon: '📄', title: 'Красивый отчёт', text: 'Экспорт в HTML/PDF с графиками, CSV и JSON — удобно читать, распечатать и сохранить.' },
 ];
 
-export function Landing({ onFiles, onDrop, onDemo, loading, error, dark, toggleTheme }: Props) {
-  const dirInput = useRef<HTMLInputElement>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
+export function Landing({ onCollected, onError, onDrop, onDemo, loading, error, dark, toggleTheme }: Props) {
   const [over, setOver] = useState(false);
+  const [menu, setMenu] = useState(false);
+
+  // перетаскивание папки на любую часть страницы — без системных запросов браузера
+  useEffect(() => {
+    let depth = 0;
+    const enter = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes('Files')) return;
+      depth++;
+      setOver(true);
+    };
+    const leave = () => {
+      depth = Math.max(0, depth - 1);
+      if (!depth) setOver(false);
+    };
+    const overFn = (e: DragEvent) => e.preventDefault();
+    const drop = (e: DragEvent) => {
+      e.preventDefault();
+      depth = 0;
+      setOver(false);
+      if (e.dataTransfer?.files.length && !menu) onDrop(e.dataTransfer);
+    };
+    window.addEventListener('dragenter', enter);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('dragover', overFn);
+    window.addEventListener('drop', drop);
+    return () => {
+      window.removeEventListener('dragenter', enter);
+      window.removeEventListener('dragleave', leave);
+      window.removeEventListener('dragover', overFn);
+      window.removeEventListener('drop', drop);
+    };
+  }, [onDrop, menu]);
 
   return (
     <div className="landing">
+      {over && !menu && !loading && (
+        <div className="drop-overlay" aria-hidden="true">
+          <div>
+            <Icon.upload size={40} />
+            <b>Отпустите папку, чтобы начать анализ</b>
+            <span>Файлы прочитаются локально</span>
+          </div>
+        </div>
+      )}
+      <ImportMenu open={menu} onClose={() => setMenu(false)} onCollected={onCollected} onDemo={onDemo} onError={onError} />
       <div className="landing-top">
         <div className="brand">
           <span className="brand-mark">◔</span> TG Stats
@@ -49,19 +92,7 @@ export function Landing({ onFiles, onDrop, onDemo, loading, error, dark, toggleT
         </div>
       </header>
 
-      <div
-        className={`dropzone ${over ? 'over' : ''}`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setOver(true);
-        }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setOver(false);
-          onDrop(e.dataTransfer);
-        }}
-      >
+      <div className={`dropzone ${over ? 'over' : ''}`}>
         {loading ? (
           <div className="loading">
             <div className="spinner" />
@@ -72,14 +103,11 @@ export function Landing({ onFiles, onDrop, onDemo, loading, error, dark, toggleT
             <div className="drop-icon">
               <Icon.upload size={34} />
             </div>
-            <div className="drop-title">Перетащите сюда папку экспорта</div>
-            <div className="drop-sub">или файл result.json, messages.html, ZIP-архив</div>
+            <div className="drop-title">Перетащите папку экспорта сюда</div>
+            <div className="drop-sub">ChatExport_…, result.json, messages.html или ZIP-архив</div>
             <div className="drop-actions">
-              <Button variant="filled" icon={<Icon.folder size={18} />} onClick={() => dirInput.current?.click()}>
-                Выбрать папку
-              </Button>
-              <Button icon={<Icon.file size={18} />} onClick={() => fileInput.current?.click()}>
-                Выбрать файл
+              <Button variant="filled" icon={<Icon.upload size={18} />} onClick={() => setMenu(true)}>
+                Открыть экспорт
               </Button>
               <Button icon={<Icon.sparkle size={18} />} onClick={onDemo}>
                 Демо
@@ -88,8 +116,6 @@ export function Landing({ onFiles, onDrop, onDemo, loading, error, dark, toggleT
             <div className="drop-note">Папка целиком = статистика + просмотр фото, видео и голосовых</div>
           </>
         )}
-        <input ref={dirInput} type="file" hidden multiple {...({ webkitdirectory: '', directory: '' } as any)} onChange={(e) => e.target.files?.length && onFiles(e.target.files)} />
-        <input ref={fileInput} type="file" hidden multiple accept=".json,.html,.zip,application/json,text/html,application/zip" onChange={(e) => e.target.files?.length && onFiles(e.target.files)} />
       </div>
       {error && (
         <div className="error-banner" role="alert">

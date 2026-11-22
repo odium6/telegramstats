@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Menu, SegmentedControl, Slider, Switch, TabBar } from 'glisse';
 import type { Analysis } from '../core/analyze';
 import type { AnalysisOptions, Chat } from '../core/types';
-import type { MediaStore } from '../core/loader';
+import type { Collected, MediaStore } from '../core/loader';
+import { ImportMenu } from './ImportMenu';
 import { chatTypeName } from '../core/parseJson';
 import { fmtDuration } from '../core/time';
 import { AppCtx, type Ctx } from './components';
@@ -29,7 +30,7 @@ interface Props {
   onReset: () => void;
   dark: boolean;
   toggleTheme: () => void;
-  addMedia: (f: FileList) => void;
+  addMedia: (c: Collected) => void;
 }
 
 const TABS = [
@@ -48,7 +49,8 @@ export function Dashboard({ chat, a, t, media, opts, setOpts, busy, onReset, dar
   const [tab, setTab] = useState(() => (location.hash.slice(1) && TABS.some((x) => x.value === location.hash.slice(1)) ? location.hash.slice(1) : 'overview'));
   const [focusId, setFocusId] = useState<number | null>(null);
   const [settings, setSettings] = useState(false);
-  const mediaInput = useRef<HTMLInputElement>(null);
+  const [mediaMenu, setMediaMenu] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
 
   useEffect(() => {
     history.replaceState(null, '', `#${tab}`);
@@ -62,7 +64,7 @@ export function Dashboard({ chat, a, t, media, opts, setOpts, busy, onReset, dar
         setFocusId(id);
         setTab('messages');
       },
-      openMediaPicker: () => mediaInput.current?.click(),
+      openMediaPicker: () => setMediaMenu(true),
     }),
     [a, chat, t, media],
   );
@@ -214,7 +216,7 @@ export function Dashboard({ chat, a, t, media, opts, setOpts, busy, onReset, dar
               <label>Медиафайлы</label>
               <div className="inline">
                 <span className="muted">{media.generator ? 'демо-медиа' : `${media.count.toLocaleString('ru-RU')} файлов загружено`}</span>
-                <Button icon={<Icon.folder size={16} />} onClick={() => mediaInput.current?.click()}>
+                <Button icon={<Icon.folder size={16} />} onClick={() => setMediaMenu(true)}>
                   Добавить папку с медиа
                 </Button>
               </div>
@@ -243,7 +245,21 @@ export function Dashboard({ chat, a, t, media, opts, setOpts, busy, onReset, dar
         <nav className="tabbar-wrap" aria-label="Разделы">
           <TabBar items={TABS} value={tab} onValueChange={setTab} aria-label="Разделы" />
         </nav>
-        <input ref={mediaInput} type="file" hidden multiple {...({ webkitdirectory: '', directory: '' } as any)} onChange={(e) => e.target.files?.length && addMedia(e.target.files)} />
+        <ImportMenu
+          open={mediaMenu}
+          mode="media"
+          onClose={() => setMediaMenu(false)}
+          onCollected={(c) => {
+            setMediaError(c.media.count ? null : 'В выбранной папке не найдено медиафайлов.');
+            addMedia(c);
+          }}
+          onError={setMediaError}
+        />
+        {mediaError && (
+          <div className="toast" role="alert" onClick={() => setMediaError(null)}>
+            ⚠️ {mediaError}
+          </div>
+        )}
       </div>
     </AppCtx.Provider>
   );
