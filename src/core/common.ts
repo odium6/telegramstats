@@ -47,3 +47,16 @@ export function extractFromText(text: string, m: Msg) {
   const ments = text.match(/(^|\s)@[A-Za-z0-9_]{4,}/g);
   if (ments) m.mentions = [...(m.mentions ?? []), ...ments.map((t) => t.trim().toLowerCase())];
 }
+
+/* Безопасные версии Math.max(...arr) и arr.push(...src): при сотнях тысяч
+ * элементов spread упирается в лимит аргументов и падает с
+ * «Maximum call stack size exceeded». */
+export function maxOf(arr: ArrayLike<number>, init = -Infinity): number {
+  let m = init;
+  for (let i = 0; i < arr.length; i++) if (arr[i] > m) m = arr[i];
+  return m;
+}
+export function pushAll<T>(target: T[], src: ArrayLike<T>): T[] {
+  for (let i = 0; i < src.length; i++) target.push(src[i]);
+  return target;
+}

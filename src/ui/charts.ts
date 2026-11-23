@@ -125,7 +125,8 @@ export function heatmapOption(a: Analysis, t: Theme, si: number | null): Opt {
 
 export function calendarOption(a: Analysis, t: Theme): { option: Opt; height: number } {
   const years = [...new Set(a.calendar.map(([d]) => d.slice(0, 4)))];
-  const max = Math.max(1, ...a.calendar.map(([, v]) => v));
+  let max = 1;
+  for (const [, v] of a.calendar) if (v > max) max = v;
   const cell = 15;
   const per = cell * 7 + 34;
   return {

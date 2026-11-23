@@ -1,6 +1,7 @@
 // Сбор файлов из папки / drag&drop / ZIP. Всё читается локально в браузере —
 // ни один байт не отправляется в сеть.
 import type JSZipType from 'jszip';
+import { pushAll } from './common';
 
 export interface InFile {
   path: string; // относительный путь с прямыми слэшами
@@ -104,7 +105,7 @@ async function expandZip(file: File): Promise<InFile[]> {
 async function wrapFiles(list: { file: File; path: string }[]): Promise<InFile[]> {
   const out: InFile[] = [];
   for (const { file, path } of list) {
-    if (/\.zip$/i.test(file.name)) out.push(...(await expandZip(file)));
+    if (/\.zip$/i.test(file.name)) pushAll(out, await expandZip(file));
     else out.push({ path: norm(path || file.name), size: file.size, get: async () => file });
   }
   return out;
@@ -171,6 +172,6 @@ export async function pickDirectory(): Promise<Collected | null> {
     }
   };
   await walk(dir, dir.name + '/');
-  for (const z of zips) files.push(...(await expandZip(z)));
+  for (const z of zips) pushAll(files, await expandZip(z));
   return classify(files);
 }

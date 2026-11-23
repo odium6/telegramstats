@@ -1,4 +1,5 @@
 import type { AnalysisOptions, Chat, Msg, MsgKind } from './types';
+import { maxOf, pushAll } from './common';
 import { makeTz, monthKey, monthKeyToIso, dayKeyToIso, fmtDuration } from './time';
 import {
   FAREWELL_RE, LAUGH_RE, isCheckin, isGreeting, LOVE_RE, SAD_RE, SMILE_RE, STOPWORDS, SWEAR_RE,
@@ -654,7 +655,7 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
     ps.activeDays = a.days.size;
     ps.nightShare = ps.messages ? a.night / ps.messages : 0;
     ps.weekendShare = ps.messages ? a.weekend / ps.messages : 0;
-    ps.maxRun = a.runs.length ? Math.max(...a.runs) : 0;
+    ps.maxRun = a.runs.length ? maxOf(a.runs) : 0;
     ps.avgRun = a.runs.length ? a.runs.reduce((s, v) => s + v, 0) / a.runs.length : 0;
     ps.uniqueWords = a.words.size;
     ps.richness = ps.words ? a.words.size / Math.sqrt(ps.words) : 0;
@@ -675,7 +676,7 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
       while (v >= RESP_BINS[b]) b++;
       respHist[si][b]++;
     }
-    for (let h = 0; h < 24; h++) hourBuckets[si][h].push(...a.respHour[h]);
+    for (let h = 0; h < 24; h++) pushAll(hourBuckets[si][h], a.respHour[h]);
     for (let mi = 0; mi < nMonths; mi++) {
       if (a.respMonthN[mi] >= 3 && si < S && (series[si].key === key || !overflow)) responseMonthly[si][mi] = a.respMonthSum[mi] / a.respMonthN[mi] / 60;
     }
@@ -765,7 +766,7 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
       return median(arr);
     });
     const all: number[] = [];
-    for (const a of acc.values()) all.push(...a.resp);
+    for (const a of acc.values()) pushAll(all, a.resp);
     const base = median(all);
     const err = Number.isFinite(base) && base > 0 ? (Math.max(...meds.map((m) => Math.abs(m - base))) / base) * 100 : null;
     items.push({ name: 'Время ответа (медиана)', value: err === null ? '—' : `±${err.toFixed(0)}%`, error: err, level: err === null ? 'low' : err < 10 ? 'high' : err < 30 ? 'medium' : 'low', note: 'Ответом считается сообщение другого участника в пределах одного разговора. Погрешность — изменение медианы при пороге паузы ×0.5 и ×2.' });
