@@ -23,7 +23,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # --ignore-scripts: нейросети работают в браузере, серверные бинарники onnxruntime-node (CUDA) не нужны
+      - run: npm ci --ignore-scripts
       - run: npm test
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
