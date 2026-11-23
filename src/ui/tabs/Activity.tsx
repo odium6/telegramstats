@@ -3,6 +3,7 @@ import { SegmentedControl, Switch } from 'glisse';
 import { Card, ChartCard, DataTable, Stat, useApp } from '../components';
 import { MONTHS, WEEKDAYS, calendarOption, cumulativeOption, heatmapOption, hoursOption, monthsOfYearOption, num, timelineOption, weekdaysOption } from '../charts';
 import { fmtDuration } from '../../core/time';
+import { SleepCard } from '../insights';
 
 export function ActivityTab() {
   const { a, t } = useApp();
@@ -87,6 +88,7 @@ export function ActivityTab() {
       <ChartCard span={6} title="По дням недели" option={wd} height={260} controls={pctToggle} table={{ head: ['День', ...names], rows: WEEKDAYS.map((d, i) => [d, ...a.weekdays.map((r) => r[i])]) }} />
       <ChartCard span={6} title="По месяцам года" option={moy} height={260} controls={pctToggle} hint="Сезонность: сумма за все годы по каждому месяцу." table={{ head: ['Месяц', ...names], rows: MONTHS.map((m, i) => [m, ...a.monthsOfYear.map((r) => r[i])]) }} />
       <ChartCard span={12} title="Накопительно" option={cum} height={260} hint="Сколько всего сообщений написал каждый к данному месяцу — видно, кто «обгоняет»." />
+      <SleepCard />
       <TopDays />
     </div>
   );

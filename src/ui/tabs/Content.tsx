@@ -3,6 +3,7 @@ import { Card, ChartCard, DataTable, Dot, Stat, useApp } from '../components';
 import { lengthHistOption, matrixOption, monthlyLines, num, pct, personCompareOption, sentimentOption, topBarsOption, wordCloudOption } from '../charts';
 import { colorOf } from '../theme';
 import type { PersonStats } from '../../core/analyze';
+import { VocabCard } from '../insights';
 
 const per = (v: number, p: PersonStats) => (p.messages ? (v / p.messages) * 100 : 0);
 
@@ -98,6 +99,7 @@ export function ContentTab() {
         </Card>
       ))}
 
+      <VocabCard />
       <ChartCard span={6} title="Стиль общения" option={styleCmp} height={340} hint="Сколько процентов сообщений содержат вопрос, смех, слова нежности и т.д." />
       <ChartCard span={6} title="Длина сообщений (в словах)" option={lenHist} height={340} hint="Доля сообщений каждой длины. Короткие «ок», «да» — слева." />
       <ChartCard span={8} title="Тональность по месяцам" option={sent} height={280} hint={`Словарная оценка эмоциональной окраски от −1 до +1. Охват: ${pct(a.sentimentCoverage)} текстовых сообщений. Погрешность высокая — см. «Точность».`} />

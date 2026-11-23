@@ -103,6 +103,8 @@ function reactionsOf(raw: Raw): Reaction[] | undefined {
     emoji: r.type === 'emoji' ? String(r.emoji) : r.type === 'paid' ? '⭐' : r.type === 'custom_emoji' ? '✨' : '❔',
     count: Number(r.count) || 0,
     from: Array.isArray(r.recent) ? r.recent.map((x: Raw) => String(x.from_id ?? x.from ?? '')) : [],
+    // дата реакции — ISO без зоны (локальное время экспорта), разбирается как локальное
+    dates: Array.isArray(r.recent) ? r.recent.map((x: Raw) => (x.date ? Math.floor(Date.parse(x.date) / 1000) || 0 : 0)) : undefined,
   }));
 }
 

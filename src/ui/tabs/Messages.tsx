@@ -53,7 +53,7 @@ export function MessagesTab({ focusId, clearFocus }: { focusId: number | null; c
       if (kind === 'questions' && !m.text.includes('?')) return false;
       if (kind === 'replies' && m.replyTo === undefined) return false;
       if (kind === 'reactions' && !m.reactions?.length) return false;
-      if (dq && !m.text.toLowerCase().includes(dq) && !(m.media?.name ?? '').toLowerCase().includes(dq)) return false;
+      if (dq && !m.text.toLowerCase().includes(dq) && !(m.transcript ?? '').toLowerCase().includes(dq) && !(m.media?.name ?? '').toLowerCase().includes(dq)) return false;
       if (searching && m.service && m.kind !== 'call') return false;
       return true;
     });
@@ -147,6 +147,7 @@ export function MessagesTab({ focusId, clearFocus }: { focusId: number | null; c
                       <div className="msg-kind">{m.kind === 'poll' && m.poll ? `📊 ${m.poll.q} — ${m.poll.answers.map((x) => `${x.text} (${x.voters})`).join(', ')}` : m.kind === 'location' && m.loc ? `📍 ${m.loc.lat.toFixed(5)}, ${m.loc.lon.toFixed(5)}` : `[${kindLabel(m.kind)}]`}</div>
                     ) : null}
                     {m.text && <div className="msg-text">{highlight(m.text, dq)}</div>}
+                    {m.transcript && <div className="msg-transcript">🎙 {highlight(m.transcript, dq)}</div>}
                     <div className="msg-foot">
                       {m.reactions?.map((r, i) => <span className="msg-react" key={i}>{r.emoji} {r.count > 1 ? r.count : ''}</span>)}
                       <span className="msg-time">{m.edited ? 'изм. ' : ''}{new Date(m.ts * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>

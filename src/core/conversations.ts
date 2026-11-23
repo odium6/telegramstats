@@ -1,5 +1,6 @@
 import type { Msg } from './types';
 import { DELAY_RE, isCheckin, isGreeting } from './text';
+import { dot, sigmoid } from './calibrate';
 
 export interface GapComp {
   mu: number;
@@ -57,6 +58,10 @@ export interface Conversation {
   day: number;
   /** сколько коротких пауз было склеено внутрь разговора */
   merged?: number;
+  /** вектор признаков (для калибровки) */
+  x?: number[];
+  /** ответ пользователя */
+  label?: 0 | 1;
 }
 
 export interface GapModel {
@@ -178,15 +183,46 @@ export function estimateGap(events: Msg[]): GapModel {
   return { T, auto: true, quality: separation > 2.2 ? 'high' : 'medium', ...base };
 }
 
-const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
+
+/** Признаки начала разговора (вектор x). Веса по умолчанию — CONV_W0. */
+export const CONV_FEATURES = [
+  'Длина паузы',
+  'Приветствие',
+  'Вопрос о делах',
+  'Звонок',
+  'Открывающее сообщение — вопрос',
+  'Пауза больше 5 часов',
+  'Пишет снова, хотя прошлое сообщение было его/её',
+  'Ответ (reply) на сообщение собеседника из прошлого разговора',
+  'Прошлый разговор закончился вопросом собеседника',
+  'Извинение за задержку',
+  'Реакция на прошлое сообщение собеседника',
+  'Ответ (reply) на своё старое сообщение',
+] as const;
+export const CONV_W0 = [1, 1.6, 1.3, 0.8, 0.4, 0.3, 1.0, -2.4, -1.4, -1.6, -3.5, 0.3, 0];
+
+export interface SegmentOptions {
+  /** вероятность «вопрос о делах» по id сообщения */
+  checkinP?: Map<number, number>;
+  /** множитель порога паузы по часу суток (24 значения) */
+  hourFactor?: number[];
+  hourOf?: (ts: number) => number;
+  /** веса признаков (по умолчанию CONV_W0) */
+  weights?: number[];
+  /** ответы пользователя: id первого сообщения → 1 начал открывший, 0 — собеседник */
+  labels?: Record<number, 0 | 1>;
+}
 
 /** dayOf(ts) — номер логического дня. */
-export function segment(events: Msg[], T: number, dayOf: (ts: number) => number, checkinP?: Map<number, number>): Conversation[] {
+export function segment(events: Msg[], T: number, dayOf: (ts: number) => number, o: SegmentOptions = {}): Conversation[] {
   const convs: Conversation[] = [];
   const out: Conversation[] = [];
   if (!events.length) return convs;
   const idIndex = new Map<number, number>();
   events.forEach((e, i) => idIndex.set(e.id, i));
+  const w = o.weights ?? CONV_W0;
+  // порог зависит от часа суток: там, где обычно отвечают медленнее, пауза длиннее
+  const Tat = (ts: number) => (o.hourFactor && o.hourOf ? T * o.hourFactor[o.hourOf(ts)] : T);
 
   let s = 0;
   const flush = (e: number) => {
@@ -216,14 +252,22 @@ export function segment(events: Msg[], T: number, dayOf: (ts: number) => number,
     });
   };
   for (let i = 1; i < events.length; i++) {
-    if (events[i].ts - events[i - 1].ts > T) {
+    if (events[i].ts - events[i - 1].ts > Tat(events[i].ts)) {
       flush(i - 1);
       s = i;
     }
   }
   flush(events.length - 1);
 
-  // оценка инициативы (и склейка «продолжений» с предыдущим разговором)
+  const mergeInto = (prev: Conversation, c: Conversation) => {
+    prev.end = c.end;
+    prev.endTs = c.endTs;
+    prev.count += c.count;
+    prev.ender = c.ender;
+    prev.merged = (prev.merged ?? 0) + 1;
+    for (const k of c.participants) if (!prev.participants.includes(k)) prev.participants.push(k);
+  };
+
   for (let ci = 0; ci < convs.length; ci++) {
     const c = convs[ci];
     if (ci === 0) {
@@ -236,40 +280,33 @@ export function segment(events: Msg[], T: number, dayOf: (ts: number) => number,
     // открывающий блок: сообщения открывшего до первой реплики собеседника
     let openText = '';
     let replyTarget: Msg | undefined;
-    let checkinFound = 0;
+    let checkinPr = 0;
     for (let i = c.start; i <= c.end && i < c.start + 8; i++) {
       const e = events[i];
       if (e.from !== c.opener) break;
       openText += '\n' + e.text;
-      checkinFound = Math.max(checkinFound, checkinP?.get(e.id) ?? 0);
+      checkinPr = Math.max(checkinPr, o.checkinP?.get(e.id) ?? 0);
       if (replyTarget === undefined && e.replyTo !== undefined) {
         const ti = idIndex.get(e.replyTo);
         if (ti !== undefined && ti < c.start) replyTarget = events[ti];
       }
     }
-    // последний блок прошлого разговора
+    if (!o.checkinP && isCheckin(openText)) checkinPr = 0.9;
     const lastPrev = events[prev.end];
     let prevBlock = '';
     for (let i = prev.end; i >= prev.start && events[i].from === lastPrev.from; i--) prevBlock = events[i].text + ' ' + prevBlock;
 
-    const r = c.gapBefore / T;
-    let z = 0.6 + Math.min(2, 0.9 * Math.log2(Math.max(1, r)));
+    const Tl = Tat(c.startTs);
+    const r = c.gapBefore / Tl;
     const greet = isGreeting(openText);
-    const checkinPr = checkinP ? checkinFound : isCheckin(openText) ? 0.9 : 0;
     const checkin = checkinPr >= 0.5;
     const delay = DELAY_RE.test(openText);
     const isCall = events[c.start].kind === 'call';
     const first = events[c.start];
 
-    // Цепочка без ответа: человек уже писал (прошлый «разговор» остался без ответа)
-    // и пишет снова — это одна попытка начать разговор, а не несколько.
+    // Цепочка без ответа: человек пишет снова, а прошлое осталось без ответа — одна попытка.
     if (!prev.responded && prev.opener === c.opener && c.gapBefore < 12 * 3600) {
-      prev.end = c.end;
-      prev.endTs = c.endTs;
-      prev.count += c.count;
-      prev.ender = c.ender;
-      prev.merged = (prev.merged ?? 0) + 1;
-      for (const k of c.participants) if (!prev.participants.includes(k)) prev.participants.push(k);
+      mergeInto(prev, c);
       if (c.responded) {
         prev.responded = true;
         prev.firstReplySec = c.startTs - prev.startTs + (c.firstReplySec ?? 0);
@@ -277,16 +314,9 @@ export function segment(events: Msg[], T: number, dayOf: (ts: number) => number,
       if (!prev.reasons.includes(CHAIN)) prev.reasons.push(CHAIN);
       continue;
     }
-
-    // Пауза чуть больше порога без приветствия/звонка — это пауза внутри
-    // того же разговора, а не новый разговор: склеиваем.
+    // Пауза чуть больше порога без приветствия/вопроса о делах/звонка — та же беседа.
     if (r < 2.5 && !greet && !checkin && !isCall) {
-      prev.end = c.end;
-      prev.endTs = c.endTs;
-      prev.count += c.count;
-      prev.ender = c.ender;
-      prev.merged = (prev.merged ?? 0) + 1;
-      for (const k of c.participants) if (!prev.participants.includes(k)) prev.participants.push(k);
+      mergeInto(prev, c);
       if (!prev.responded) {
         for (let i = prev.start; i <= prev.end; i++) {
           if (events[i].from !== prev.opener) {
@@ -299,39 +329,34 @@ export function segment(events: Msg[], T: number, dayOf: (ts: number) => number,
       continue;
     }
 
-    c.reasons.push(`Пауза перед разговором ${fmt(c.gapBefore)} (порог ${fmt(T)})`);
-    if (greet) { z += 1.6; c.reasons.push('Приветствие в первом сообщении'); }
-    if (checkin) { z += 1.3 * checkinPr; c.reasons.push(`Вопрос о делах / интерес к собеседнику (уверенность ${Math.round(checkinPr * 100)}%)`); }
-    if (isCall) { z += 0.8; c.reasons.push('Разговор начался со звонка'); }
-    if (/\?/.test(openText) && !delay && !replyTarget) { z += 0.4; c.reasons.push('Открывающее сообщение — вопрос'); }
-    if (c.gapBefore >= 5 * 3600) z += 0.3;
-
-    if (lastPrev.from === c.opener) {
-      z += 1.0;
-      c.reasons.push('Пишет снова, хотя прошлое сообщение было его/её');
-    } else {
-      c.alt = lastPrev.from;
-      if (replyTarget && replyTarget.from !== c.opener) {
-        z -= 2.4;
-        c.reasons.push('Это ответ (reply) на сообщение собеседника из прошлого разговора');
-      }
-      if (/\?/.test(prevBlock) && !greet && !checkin) {
-        z -= 1.4;
-        c.reasons.push('Прошлый разговор закончился вопросом собеседника — похоже на отложенный ответ');
-      }
-      if (delay) {
-        z -= 1.6;
-        c.reasons.push('Извинение за задержку — это продолжение, а не новый разговор');
-      }
-      // Реакция на последнее сообщение собеседника («ахахах», «красиво как», «хорошо»,
-      // стикер) — это ответ, а не начало нового разговора.
-      if (!greet && !checkin && !isCall && c.gapBefore < 8 * 3600 && isReaction(first)) {
-        z -= 3.5;
-        c.reasons.push('Первое сообщение — реакция на прошлое сообщение собеседника');
-      }
+    const alt = lastPrev.from !== c.opener;
+    if (alt) c.alt = lastPrev.from;
+    const x = [
+      0.6 + Math.min(2, 0.9 * Math.log2(Math.max(1, r))),
+      greet ? 1 : 0,
+      checkinPr,
+      isCall ? 1 : 0,
+      /\?/.test(openText) && !delay && !replyTarget ? 1 : 0,
+      c.gapBefore >= 5 * 3600 ? 1 : 0,
+      alt ? 0 : 1,
+      alt && replyTarget && replyTarget.from !== c.opener ? 1 : 0,
+      alt && /\?/.test(prevBlock) && !greet && !checkin ? 1 : 0,
+      alt && delay ? 1 : 0,
+      alt && !greet && !checkin && !isCall && c.gapBefore < 8 * 3600 && isReaction(first) ? 1 : 0,
+      replyTarget && replyTarget.from === c.opener ? 1 : 0,
+    ];
+    c.x = x;
+    c.reasons.push(`Пауза перед разговором ${fmt(c.gapBefore)} (порог в это время суток ${fmt(Tl)})`);
+    for (let k = 1; k < x.length; k++) {
+      if (!x[k]) continue;
+      c.reasons.push(k === 2 ? `${CONV_FEATURES[k]} (уверенность ${Math.round(checkinPr * 100)}%)` : CONV_FEATURES[k]);
     }
-    if (replyTarget && replyTarget.from === c.opener) z += 0.3;
-    c.p = sigmoid(z);
+    const label = o.labels?.[c.firstId];
+    if (label !== undefined) {
+      c.label = label;
+      c.reasons.push(label ? 'Подтверждено вами: начал(а) открывший' : 'Отмечено вами: на самом деле начал(а) собеседник');
+    }
+    c.p = label !== undefined ? (alt ? label : 1) : sigmoid(dot(w, x));
     out.push(c);
   }
   return out;

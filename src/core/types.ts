@@ -11,6 +11,8 @@ export interface Reaction {
   count: number;
   /** ключи участников, поставивших реакцию (Telegram отдаёт только «recent») */
   from: string[];
+  /** когда поставлена реакция (unix, сек) — параллельно from; это метка «прочитано» */
+  dates?: number[];
 }
 
 export interface Media {
@@ -53,6 +55,20 @@ export interface Msg {
   poll?: { q: string; answers: { text: string; voters: number }[]; total: number };
   loc?: { lat: number; lon: number };
   members?: string[];
+  /** расшифровка голосового/кружка (локальная нейросеть, по желанию) */
+  transcript?: string;
+  /** тональность от локальной нейросети: −1…+1 */
+  nsent?: number;
+}
+
+/** Ответы пользователя в режиме проверки: 1 — алгоритм прав / да, 0 — нет. */
+export interface Labels {
+  /** id сообщения → это вопрос «как дела»? */
+  checkin: Record<number, 0 | 1>;
+  /** id первого сообщения разговора → начал ли его открывший (1) или собеседник (0) */
+  conv: Record<number, 0 | 1>;
+  /** дата начала периода (YYYY-MM-DD) → это была ссора/напряжение? */
+  tension: Record<string, 0 | 1>;
 }
 
 export interface Participant {
@@ -99,4 +115,8 @@ export interface AnalysisOptions {
   people?: string[];
   /** учитывать ботов и посторонних (по умолчанию нет) */
   includeBots?: boolean;
+  /** разметка пользователя: калибрует веса алгоритма и даёт измеренную точность */
+  labels?: Labels;
+  /** использовать расшифровки голосовых в текстовой статистике */
+  useTranscripts?: boolean;
 }

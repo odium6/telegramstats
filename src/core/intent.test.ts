@@ -13,7 +13,7 @@ const conv = (lines: [string, string, number?][]): Msg[] => {
     return { id: ++id, ts, from, service: false, kind: text.startsWith('[') ? 'round' : 'text', text: text.startsWith('[') ? '' : text };
   });
 };
-const asked = (lines: [string, string, number?][]) => detectCheckins(conv(lines)).map((h) => h.text);
+const asked = (lines: [string, string, number?][]) => detectCheckins(conv(lines)).hits.map((h) => h.text);
 
 describe('сокращения «кд / чд» по контексту', () => {
   it('«чд» с ответом о занятии — вопрос о делах', () => {

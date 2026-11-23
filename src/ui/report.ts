@@ -105,6 +105,14 @@ ${leader && a.conv.responded > 3 ? `<section><h2>Кто чаще начинае�
 ${[...a.conv.rows].sort((x, y) => y.share - x.share).slice(0, 12).map((r) => `<tr><td>${esc(nameOf(r.key))}</td><td>${pct(r.share, 1)}</td><td>${(r.margin * 100).toFixed(1)}</td><td>${pct(r.naiveShare, 1)}</td><td>${pct(r.dayFirstShare, 1)}</td><td>${r.attempts}</td><td>${pct(r.endedShare, 1)}</td><td>${fmtDuration(a.people.find((p) => p.key === r.key)?.response.median ?? NaN)}</td></tr>`).join('')}
 </tbody></table></section>` : ''}
 <section><h2>Интересные факты</h2><ul class="facts">${a.facts.map((f) => `<li>${esc(f.icon)} ${esc(f.text)}</li>`).join('')}</ul></section>
+${a.changes.length ? `<section><h2>Как менялось общение</h2><ul class="facts">${a.changes.map((c) => `<li>${c.up ? '↗' : '↘'} ${esc(c.text)}</li>`).join('')}</ul></section>` : ''}
+${a.sleep.some((s) => s.nights >= 5) ? `<section><h2>Режим сна</h2><table><thead><tr><th>Участник</th><th>Отбой</th><th>Подъём</th><th>Пишет утром первым</th></tr></thead><tbody>${a.sleep.filter((s) => s.nights >= 5).map((s) => `<tr><td>${esc(nameOf(s.key))}</td><td>${s.sleep}</td><td>${s.wake}</td><td>${pct(s.wakesFirst)}</td></tr>`).join('')}</tbody></table></section>` : ''}
+${a.tension.length ? `<section><h2>Напряжённые периоды</h2><p class="note">Найдено ${a.tension.length} периодов (эвристика по резким фразам, сухим ответам и тональности относительно обычного уровня пары), в среднем ${(a.tension.reduce((s, e) => s + e.days, 0) / a.tension.length).toFixed(1)} дн. ${(() => {
+  const rec = new Map<string, number>();
+  for (const e of a.tension) if (e.reconciler) rec.set(e.reconciler, (rec.get(e.reconciler) ?? 0) + 1);
+  const tot = [...rec.values()].reduce((s, v) => s + v, 0);
+  return tot ? 'Первым(ой) мирится: ' + [...rec.entries()].map(([k, v]) => `${esc(nameOf(k))} — ${pct(v / tot)}`).join(', ') + '.' : '';
+})()}</p></section>` : ''}
 ${imgs.map((i) => `<section><h2>${esc(i.title)}</h2><img src="${i.src}" alt="${esc(i.title)}">${i.note ? `<p class="note">${esc(i.note)}</p>` : ''}</section>`).join('\n')}
 ${cmp ? `<section><h2>Сравнение участников</h2><table><thead><tr>${cmp.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${cmp.rows.map((r) => `<tr>${r.map((c) => `<td>${esc(typeof c === 'number' ? c.toLocaleString('ru-RU') : c)}</td>`).join('')}</tr>`).join('')}</tbody></table></section>` : ''}
 <section><h2>Типы сообщений</h2><table><thead><tr><th>Тип</th><th>Количество</th></tr></thead><tbody>${a.kinds.map(([k, v]) => `<tr><td>${esc(kindLabel(k))}</td><td>${num(v)}</td></tr>`).join('')}</tbody></table></section>

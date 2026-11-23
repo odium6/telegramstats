@@ -3,7 +3,8 @@ import { echarts } from './echarts';
 import type { Theme } from './theme';
 import { Icon } from './icons';
 import type { Analysis } from '../core/analyze';
-import type { Chat } from '../core/types';
+import type { Chat, Labels } from '../core/types';
+import type { useMl } from './ml';
 import type { MediaStore } from '../core/loader';
 
 export interface Ctx {
@@ -13,7 +14,12 @@ export interface Ctx {
   media: MediaStore;
   goToMessage: (id: number) => void;
   openMediaPicker: () => void;
+  labels: Labels;
+  setLabel: SetLabel;
+  ml: ReturnType<typeof useMl>;
+  openReview: () => void;
 }
+export type SetLabel = <K extends keyof Labels>(kind: K, key: keyof Labels[K] & (string | number), v: 0 | 1 | undefined) => void;
 export const AppCtx = createContext<Ctx | null>(null);
 export const useApp = () => {
   const c = useContext(AppCtx);

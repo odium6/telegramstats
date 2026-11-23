@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Analysis } from '../core/analyze';
-import type { AnalysisOptions, Chat, ChatSummary } from '../core/types';
+import type { AnalysisOptions, Chat, ChatSummary, Labels } from '../core/types';
+import { emptyLabels, loadLabels, saveLabels } from './store';
+import { useMl, type Patch } from './ml';
 import { collectFromDrop, MediaStore, type Collected, type InFile } from '../core/loader';
 import { chatNameFromHtml, parseHtmlPages } from '../core/parseHtml';
 import type { WorkerIn, WorkerOut } from '../worker/analysis.worker';
@@ -84,13 +86,63 @@ export function App() {
 
   const post = (m: WorkerIn) => worker.current?.postMessage(m);
 
+  // ответы пользователя «верно / неверно» — хранятся в браузере для этого экспорта
+  const [labels, setLabels] = useState<Labels>(emptyLabels);
+  const [labelsApplied, setLabelsApplied] = useState<Labels>(emptyLabels);
+  useEffect(() => {
+    if (!chat) return;
+    const l = loadLabels(chat);
+    setLabels(l);
+    setLabelsApplied(l);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat?.id, chat?.messages.length]);
+  const setLabel = useCallback(
+    <K extends keyof Labels>(kind: K, key: keyof Labels[K] & (string | number), v: 0 | 1 | undefined) => {
+      setLabels((prev) => {
+        const next: Labels = { ...prev, [kind]: { ...prev[kind] } };
+        const bucket = next[kind] as Record<string | number, 0 | 1>;
+        if (v === undefined) delete bucket[key];
+        else bucket[key] = v;
+        if (chat) saveLabels(chat, next);
+        return next;
+      });
+    },
+    [chat],
+  );
+  // пересчёт с ответами — через паузу, чтобы не считать после каждого клика
+  useEffect(() => {
+    const h = setTimeout(() => setLabelsApplied(labels), 1500);
+    return () => clearTimeout(h);
+  }, [labels]);
+
+  // результаты нейросетей: в основной копию чата и в копию воркера анализа
+  const [patchVer, setPatchVer] = useState(0);
+  const applyPatch = useCallback(
+    (p: Patch) => {
+      if (!chat) return;
+      const byId = new Map(chat.messages.map((m) => [m.id, m]));
+      for (const [id, v] of p.nsent ?? []) {
+        const m = byId.get(id);
+        if (m) m.nsent = v;
+      }
+      for (const [id, t] of p.transcripts ?? []) {
+        const m = byId.get(id);
+        if (m) m.transcript = t || undefined; // пустая строка — речи нет
+      }
+      post({ type: 'patch', nsent: p.nsent, transcripts: p.transcripts });
+      setPatchVer((v) => v + 1);
+    },
+    [chat],
+  );
+  const ml = useMl(chat, media, applyPatch);
+
   useEffect(() => {
     if (!chat) return;
     setBusy(true);
     const id = ++reqId.current;
-    const h = setTimeout(() => post({ type: 'analyze', id, opts }), 60);
+    const h = setTimeout(() => post({ type: 'analyze', id, opts: { ...opts, labels: labelsApplied } }), 60);
     return () => clearTimeout(h);
-  }, [chat, opts]);
+  }, [chat, opts, labelsApplied, patchVer]);
 
   const loadCollected = useCallback(async (c: Collected) => {
     media.dispose();
@@ -159,6 +211,7 @@ export function App() {
     post({ type: 'demo' });
   };
   const addMedia = (c: Collected) => {
+    // новые медиа — можно расшифровывать голосовые
     const store = new MediaStore();
     store.merge(media);
     store.merge(c.media);
@@ -192,5 +245,22 @@ export function App() {
     );
   if (!chat || !analysis)
     return <Landing onCollected={onCollected} onError={onError} onDrop={onDrop} onDemo={onDemo} loading="Считаю статистику…" dark={dark} toggleTheme={toggle} />;
-  return <Dashboard chat={chat} a={analysis} t={t} media={media} opts={opts} setOpts={setOpts} busy={busy} onReset={reset} dark={dark} toggleTheme={toggle} addMedia={addMedia} />;
+  return (
+    <Dashboard
+      chat={chat}
+      a={analysis}
+      t={t}
+      media={media}
+      opts={opts}
+      setOpts={setOpts}
+      busy={busy}
+      onReset={reset}
+      dark={dark}
+      toggleTheme={toggle}
+      addMedia={addMedia}
+      labels={labels}
+      setLabel={setLabel}
+      ml={ml}
+    />
+  );
 }

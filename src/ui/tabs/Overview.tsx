@@ -5,6 +5,7 @@ import { num, pct, radarOption, shareDonut, timelineOption } from '../charts';
 import { colorOf } from '../theme';
 import { fmtDuration } from '../../core/time';
 import type { PersonStats } from '../../core/analyze';
+import { ChangesCard } from '../insights';
 
 export function peopleTable(people: PersonStats[], rowsOf: (p: PersonStats) => Record<string, string | number>) {
   const cols = Object.keys(rowsOf(people[0]));
@@ -160,6 +161,8 @@ export function OverviewTab({ onTab }: { onTab: (t: string) => void }) {
         </ul>
       </Card>
       {people.length > 1 && <ChartCard span={6} title="Профиль общения" option={radar} height={340} hint="Каждая ось нормирована: 100 — максимум среди участников." />}
+
+      <ChangesCard />
 
       {table && (
         <Card span={12} title="Сравнение участников" hint="Все ключевые метрики по каждому участнику. Можно выгрузить в CSV через меню экспорта.">

@@ -429,3 +429,43 @@ input[type='date'] { font: inherit; color: var(--text); background: var(--surfac
 
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .conv-meta.ellipsis { max-width: 260px; }
+
+/* ── проверка алгоритма, нейросети, новые карточки ── */
+.row-end { display: inline-flex; align-items: center; gap: 6px; }
+.label-btns { display: inline-flex; gap: 4px; }
+.lbl {
+  width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-solid); color: var(--muted);
+  font: inherit; font-size: 13px; cursor: pointer; display: grid; place-items: center; padding: 0;
+}
+.lbl:hover { color: var(--text); }
+.lbl.on.yes { background: var(--good); color: #fff; border-color: transparent; }
+.lbl.on.no { background: var(--bad); color: #fff; border-color: transparent; }
+.conv-row.static { cursor: default; }
+.conv-row[role='button'] { cursor: pointer; }
+.conv-row[role='button']:focus-visible { outline: 2px solid var(--accent); }
+.conv-list .conv-row { grid-template-columns: 170px 1fr auto auto; }
+@media (max-width: 700px) { .conv-list .conv-row { grid-template-columns: 1fr auto; } }
+
+.im-sheet.review { width: min(720px, 100%); }
+.review-q { font-size: 15px; line-height: 1.5; }
+.review-ctx { display: grid; gap: 4px; max-height: 46vh; overflow: auto; padding: 10px; border-radius: 14px; background: var(--surface-2); font-size: 14px; }
+.review-msg { padding: 3px 8px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-msg.focus { background: color-mix(in srgb, var(--accent) 16%, transparent); font-weight: 600; }
+.review-time { color: var(--muted); font-size: 11px; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.review-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.ml-panel { gap: 12px; }
+.ml-block { display: grid; gap: 8px; padding: 12px 14px; border-radius: 14px; background: var(--surface-2); }
+.ml-title { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.progress { display: grid; gap: 4px; }
+.progress-bar { height: 8px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.progress-bar span { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width .3s; }
+.bad { color: var(--bad); }
+
+.model-lines { margin: 0 0 6px; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+.changes { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.changes li { display: flex; gap: 10px; align-items: baseline; padding: 8px 12px; border-radius: 12px; background: var(--surface-2); font-size: 14px; }
+.ch-arrow { font-weight: 800; }
+.changes li.up .ch-arrow { color: var(--good); }
+.changes li.down .ch-arrow { color: var(--bad); }
+.msg-transcript { font-size: 13px; color: var(--text-2); font-style: italic; margin-top: 2px; white-space: pre-wrap; }

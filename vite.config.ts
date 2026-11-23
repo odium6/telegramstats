@@ -6,13 +6,16 @@ import react from '@vitejs/plugin-react';
 // внешние скрипты или шрифты. Файлы переписки остаются на компьютере.
 const CSP = [
   "default-src 'self'",
-  "script-src 'self'",
+  // 'wasm-unsafe-eval' — только для WebAssembly среды нейросетей (onnxruntime), не для JS
+  "script-src 'self' 'wasm-unsafe-eval'",
   "worker-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' blob: data:",
   "media-src 'self' blob: data:",
   "font-src 'self' data:",
-  "connect-src 'self' blob: data:",
+  // Наружу разрешены только загрузки файлов моделей с Hugging Face (по кнопке, по желанию).
+  // Переписка туда не отправляется: модели работают в браузере.
+  "connect-src 'self' blob: data: https://huggingface.co https://*.huggingface.co https://*.hf.co",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'none'",

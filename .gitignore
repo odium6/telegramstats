@@ -7,3 +7,4 @@ result.json
 ChatExport_*
 DataExport_*
 .claude/settings.local.json
+public/ort

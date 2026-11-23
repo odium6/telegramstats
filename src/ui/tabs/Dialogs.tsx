@@ -5,6 +5,7 @@ import { durationHistOption, initiatorMonthlyOption, initiatorOption, monthlyLin
 import { colorOf } from '../theme';
 import { fmtDuration } from '../../core/time';
 import { Icon } from '../icons';
+import { CalibrationCard, LabelButtons, ReadsCard, TensionCard } from '../insights';
 
 export function DialogsTab() {
   const { a, t } = useApp();
@@ -91,6 +92,7 @@ export function DialogsTab() {
       <ChartCard span={4} title="Индекс вовлечённости" option={eng} height={280} hint="Сводная оценка: 35% — инициатива, 25% — скорость ответа, 20% — доля сообщений, 20% — вопросы и интерес к делам собеседника." />
       <ChartCard span={12} title="Во сколько начинают разговоры" option={byHour} height={260} />
       <CheckinList />
+      <CalibrationCard />
 
       <div className="kpis span-12">
         {a.people.slice(0, 6).map((p) => (
@@ -101,13 +103,15 @@ export function DialogsTab() {
       <ChartCard span={6} title="Скорость ответа по часам" option={respHour} height={280} hint="Медиана времени ответа в зависимости от часа суток." />
       <ChartCard span={8} title="Скорость ответа по месяцам" option={respMonth} height={260} hint="Среднее время ответа (мин) — видно, как менялась динамика отношений." />
       <ChartCard span={4} title="Длительность разговоров" option={durHist} height={260} />
+      <TensionCard />
+      <ReadsCard />
       <ConversationList />
     </div>
   );
 }
 
 function CheckinList() {
-  const { a, t, goToMessage } = useApp();
+  const { a, t, goToMessage, labels, setLabel } = useApp();
   const [who, setWho] = useState('all');
   const [mode, setMode] = useState('all');
   const [limit, setLimit] = useState(20);
@@ -144,14 +148,17 @@ function CheckinList() {
       <ul className="conv-list">
         {list.slice(0, limit).map((h) => (
           <li key={h.id} className={open === h.id ? 'open' : ''}>
-            <button className="conv-row" onClick={() => setOpen(open === h.id ? null : h.id)}>
+            <div className="conv-row" role="button" tabIndex={0} onClick={() => setOpen(open === h.id ? null : h.id)} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setOpen(open === h.id ? null : h.id)}>
               <span className="conv-date">{new Date(h.ts * 1000).toLocaleString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
               <span className="conv-who">
                 <Dot color={colorOf(t, idxOf(h.from))} /> <b>{nameOf(h.from)}:</b>&nbsp;<span className="ellipsis">{h.text}</span>
               </span>
               <span className="conv-meta ellipsis">{h.answer ? `→ ${h.answer}` : 'без ответа'}</span>
-              <span className={`conf ${h.p > 0.8 ? 'hi' : h.p > 0.65 ? 'mid' : 'lo'}`}>{pct(h.p)}</span>
-            </button>
+              <span className="row-end">
+                <span className={`conf ${h.p > 0.8 ? 'hi' : h.p > 0.65 ? 'mid' : 'lo'}`}>{h.label !== undefined ? 'вы' : pct(h.p)}</span>
+                <LabelButtons value={labels.checkin[h.id]} onSet={(v) => setLabel('checkin', h.id, v)} yes="Да, это вопрос о делах" no="Нет, это не вопрос о делах" />
+              </span>
+            </div>
             {open === h.id && (
               <div className="conv-detail">
                 <ul>{h.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
@@ -167,7 +174,7 @@ function CheckinList() {
 }
 
 function ConversationList() {
-  const { a, t, goToMessage } = useApp();
+  const { a, t, goToMessage, labels, setLabel } = useApp();
   const [filter, setFilter] = useState('all');
   const [limit, setLimit] = useState(30);
   const [open, setOpen] = useState<number | null>(null);
@@ -217,7 +224,16 @@ function ConversationList() {
                     {c.alt && <li>Вероятность, что инициатива у {nameOf(c.opener)}: <b>{pct(c.p)}</b>; у {nameOf(c.alt)}: <b>{pct(1 - c.p)}</b></li>}
                     {c.firstReplySec !== undefined && <li>Первый ответ через {fmtDuration(c.firstReplySec)}</li>}
                   </ul>
-                  <Button icon={<Icon.jump size={16} />} onClick={() => goToMessage(c.firstId)}>Открыть в переписке</Button>
+                  <div className="inline">
+                    <Button icon={<Icon.jump size={16} />} onClick={() => goToMessage(c.firstId)}>Открыть в переписке</Button>
+                    {c.alt && (
+                      <>
+                        <span className="small muted">Кто на самом деле начал?</span>
+                        <button className={`chip toggle ${labels.conv[c.firstId] === 1 ? 'on' : ''}`} onClick={() => setLabel('conv', c.firstId, labels.conv[c.firstId] === 1 ? undefined : 1)}>{nameOf(c.opener)}</button>
+                        <button className={`chip toggle ${labels.conv[c.firstId] === 0 ? 'on' : ''}`} onClick={() => setLabel('conv', c.firstId, labels.conv[c.firstId] === 0 ? undefined : 0)}>{nameOf(c.alt)}</button>
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
             </li>

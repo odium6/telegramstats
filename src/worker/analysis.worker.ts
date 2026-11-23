@@ -11,6 +11,7 @@ export type WorkerIn =
   | { type: 'select'; index: number }
   | { type: 'set'; chat: Chat }
   | { type: 'demo' }
+  | { type: 'patch'; nsent?: [number, number][]; transcripts?: [number, string][] }
   | { type: 'analyze'; id: number; opts: AnalysisOptions };
 
 export type WorkerOut =
@@ -55,6 +56,20 @@ self.onmessage = async (e: MessageEvent<WorkerIn>) => {
       case 'set':
         chat = msg.chat;
         break;
+      case 'patch': {
+        // результаты локальных нейросетей: тональность и расшифровки голосовых
+        if (!chat) break;
+        const byId = new Map(chat.messages.map((m) => [m.id, m]));
+        for (const [id, v] of msg.nsent ?? []) {
+          const m = byId.get(id);
+          if (m) m.nsent = v;
+        }
+        for (const [id, t] of msg.transcripts ?? []) {
+          const m = byId.get(id);
+          if (m) m.transcript = t || undefined;
+        }
+        break;
+      }
       case 'demo': {
         const { json } = generateDemoJson(42, 540);
         chat = normalizeJsonChat(json);

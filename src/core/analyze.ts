@@ -5,8 +5,12 @@ import {
   APOLOGY_RE, FAREWELL_RE, ILY_RE, LAUGH_RE, MISS_RE, THANKS_RE, isGreeting, LOVE_RE, SAD_RE, SMILE_RE, STOPWORDS, SWEAR_RE,
   domainOf, emojis, sentiment, tokenize,
 } from './text';
-import { detectCheckins, type CheckinHit } from './intent';
-import { attribute, estimateGap, segment, sharesOf, type Conversation, type GapModel } from './conversations';
+import { detectCheckins, type CheckinHit, type CheckinResult } from './intent';
+import { calibrate, type ModelReport } from './calibrate';
+import { dayBoundaries, hourFactors, readReceipts, sleepByPerson, type ReadStats, type SleepStats } from './rhythm';
+import { findTension, type TensionEpisode } from './tension';
+import { changePoints } from './changes';
+import { attribute, CONV_W0, estimateGap, segment, sharesOf, type Conversation, type GapModel, type SegmentOptions } from './conversations';
 
 export type Pair = [string, number];
 
@@ -112,6 +116,7 @@ export interface ConvLite {
   firstReplySec?: number;
   gapBefore: number;
   reasons: string[];
+  label?: 0 | 1;
 }
 
 export interface InitiatorRow {
@@ -183,6 +188,20 @@ export interface Analysis {
   excluded: { key: string; name: string; count: number; reason: 'bot' | 'guest' }[];
   /** найденные вопросы «как дела / что делаешь» с вероятностью и объяснением */
   checkins: CheckinHit[];
+  /** модель «как дела»: калибровка по ответам пользователя, выученный словарь, спорные случаи */
+  checkinModel: ModelReport;
+  checkinReview: CheckinHit[];
+  vocab: CheckinResult['vocab'];
+  /** режим сна по участникам */
+  sleep: SleepStats[];
+  /** «прочитано» по времени реакций */
+  reads: ReadStats[];
+  /** напряжённые периоды (эксперимент) */
+  tension: TensionEpisode[];
+  /** переломные моменты в динамике общения */
+  changes: { metric: string; month: string; before: string; after: string; up: boolean; text: string }[];
+  /** множитель порога паузы по часу суток */
+  hourFactor: number[];
   conv: {
     gap: GapModel;
     T: number;
@@ -202,6 +221,9 @@ export interface Analysis {
     openingsByHour: number[][];
     durationHist: { labels: string[]; values: number[] };
     list: ConvLite[];
+    model: ModelReport;
+    /** спорные начала разговоров — для режима проверки */
+    review: ConvLite[];
   };
   accuracy: { overall: number; items: AccuracyItem[] };
   facts: { icon: string; text: string }[];
@@ -244,9 +266,9 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
   const allowed = opts.people?.length ? new Set(opts.people) : null;
   const botKeys = new Set(opts.includeBots ? [] : chat.participants.filter((p) => p.bot).map((p) => p.key));
   const excluded = chat.participants.filter((p) => p.bot && botKeys.has(p.key)).map((p) => ({ key: p.key, name: p.name, count: p.count, reason: p.bot! }));
-  const msgs = chat.messages.filter(
-    (m) => m.ts >= from && m.ts <= to && !botKeys.has(m.from) && (!allowed || allowed.has(m.from) || (m.service && m.kind !== 'call')),
-  );
+  const msgs = chat.messages
+    .filter((m) => m.ts >= from && m.ts <= to && !botKeys.has(m.from) && (!allowed || allowed.has(m.from) || (m.service && m.kind !== 'call')))
+    .map((m) => (opts.useTranscripts && m.transcript && !m.text ? { ...m, text: m.transcript } : m));
 
   // ── серии (участники с цветами) ──
   const counts = new Map<string, number>();
@@ -350,6 +372,10 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
   const callsBy = zeros(S);
   let sentimentHits = 0;
   const morningDays = new Set<number>();
+  const ilyMonthly = zeros(nMonths);
+  const neural = msgs.some((m) => m.nsent !== undefined);
+  let neuralN = 0;
+  for (const m of msgs) if (m.nsent !== undefined) neuralN++;
   let textMsgs = 0;
   let reactRecent = 0;
   let reactTotal = 0;
@@ -486,7 +512,10 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
     if (APOLOGY_RE.test(text)) ps.apologies++;
     if (THANKS_RE.test(text)) ps.thanks++;
     if (MISS_RE.test(text)) ps.missYou++;
-    if (ILY_RE.test(text)) ps.ily++;
+    if (ILY_RE.test(text)) {
+      ps.ily++;
+      ilyMonthly[mi]++;
+    }
     if (FAREWELL_RE.test(text) && /(ноч|снов|night|gn|добраніч)/iu.test(text)) ps.goodnight++;
     const letters = text.replace(/[^\p{L}]/gu, '');
     if (letters.length >= 4 && letters === letters.toUpperCase() && letters !== letters.toLowerCase()) ps.caps++;
@@ -500,7 +529,9 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
         prevTok = t;
       } else prevTok = '';
     }
-    const s = sentiment(toks, em);
+    // Нейросетевая оценка (если запускалась) точнее словаря — тогда тональность
+    // считается только по оценённой нейросетью выборке.
+    const s = neural ? (m.nsent !== undefined ? { score: m.nsent, hits: 1 } : { score: 0, hits: 0 }) : sentiment(toks, em);
     if (s.hits) {
       sentimentHits++;
       const v = Math.max(-1, Math.min(1, s.score / Math.max(1, s.hits)));
@@ -522,15 +553,27 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
       if (v < best) { best = v; sleepHour = h; }
     }
   }
-  const dayOf = (ts: number) => tp(ts - sleepHour * 3600).dayKey;
+  // логический день: граница — середина самой длинной ночной паузы каждой ночи
+  const dayOf = dayBoundaries(events, tp, (ts: number) => tp(ts - sleepHour * 3600).dayKey);
+  const hourFactor = hourFactors(events, tp);
+  const hourOf = (ts: number) => tp(ts).h;
 
   const gap = estimateGap(events);
   const T = opts.gapOverride ?? gap.T;
   if (opts.gapOverride) gap.auto = false;
-  const checkins = detectCheckins(events);
+  const chk = detectCheckins(events, opts.labels?.checkin);
+  const checkins = chk.hits;
   const checkinP = new Map(checkins.map((h) => [h.id, h.p]));
   for (const h of checkins) personOf(h.from).ps.checkins++;
-  const convs = segment(events, T, dayOf, checkinP);
+  const segOpts: SegmentOptions = { checkinP, hourFactor, hourOf, labels: opts.labels?.conv };
+  let convs = segment(events, T, dayOf, segOpts);
+  // калибровка начала разговоров по ответам пользователя
+  const convLabeled = convs.filter((c) => c.x && c.alt && c.label !== undefined);
+  const convModel = calibrate(convLabeled.map((c) => c.x!), convLabeled.map((c) => c.label!), CONV_W0);
+  if (convModel.fitted) {
+    segOpts.weights = convModel.weights;
+    convs = segment(events, T, dayOf, segOpts);
+  }
   const peopleKeys = order.map((p) => p.key);
 
   // ответы, двойные сообщения, серии
@@ -601,7 +644,7 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
 
   // чувствительность к порогу
   const sens = [0.5, 1, 2].map((f) => {
-    const cs = f === 1 ? convs : segment(events, T * f, dayOf, checkinP);
+    const cs = f === 1 ? convs : segment(events, T * f, dayOf, segOpts);
     const sh = sharesOf(cs, peopleKeys);
     return { label: f === 1 ? 'T' : f < 1 ? 'T × 0.5' : 'T × 2', T: T * f, shares: peopleKeys.map((k) => sh.get(k) ?? 0) };
   });
@@ -662,7 +705,7 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
   }
   const lite = (c: Conversation): ConvLite => ({
     startTs: c.startTs, endTs: c.endTs, count: c.count, firstId: c.firstId, opener: c.opener, alt: c.alt, p: c.p,
-    responded: c.responded, firstReplySec: c.firstReplySec, gapBefore: c.gapBefore, reasons: c.reasons,
+    responded: c.responded, firstReplySec: c.firstReplySec, gapBefore: c.gapBefore, reasons: c.reasons, label: c.label,
   });
   let longestConv: Conversation | null = null;
   for (const c of responded) if (!longestConv || c.count > longestConv.count) longestConv = c;
@@ -787,15 +830,25 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
     level: convMargin < 0.05 ? 'high' : convMargin < 0.12 ? 'medium' : 'low',
     note: `95% интервал: неопределённость классификации ${N} разговоров (средняя уверенность ${(confidence * 100).toFixed(0)}%), статистическая ошибка и чувствительность к порогу паузы (${fmtDuration(T)}). Разделение «внутри/между разговорами»: ${gap.quality === 'high' ? 'чёткое' : gap.quality === 'medium' ? 'умеренное' : 'слабое — порог по умолчанию'}.`,
   });
+  // Если пользователь проверял решения — показываем измеренную точность, а не расчётную.
+  const measured = (m: ModelReport, what: string) =>
+    m.n && m.agreement !== null && m.ci
+      ? ` Проверено вами: ${m.n}; совпадение ${(m.agreement * 100).toFixed(0)}% (95% интервал ${(m.ci[0] * 100).toFixed(0)}–${(m.ci[1] * 100).toFixed(0)}%)${m.fitted ? `, веса ${what} дообучены под вашу переписку (до дообучения — ${((m.baseAgreement ?? 0) * 100).toFixed(0)}%)` : ''}.`
+      : '';
+  if (convModel.n && convModel.agreement !== null) items[items.length - 1].note += measured(convModel, 'начала разговора');
   if (checkins.length) {
     const meanP = checkins.reduce((s, h) => s + h.p, 0) / checkins.length;
-    const err = (1 - meanP) * 100;
+    const m = chk.model;
+    const useMeasured = m.n >= 15 && m.agreement !== null;
+    const err = useMeasured ? (1 - m.agreement!) * 100 : (1 - meanP) * 100;
     items.push({
       name: 'Вопросы «как дела / что делаешь»',
-      value: `±${err.toFixed(0)}%`,
+      value: `±${err.toFixed(0)}%${useMeasured ? ' (измерено)' : ''}`,
       error: err,
       level: err < 12 ? 'high' : err < 25 ? 'medium' : 'low',
-      note: `Найдено ${checkins.length} вопросов, включая сокращения (кд, чд, «че как») и опечатки. Каждый проверен по контексту и ответу собеседника; погрешность — ожидаемая доля ошибочно засчитанных (1 − средняя уверенность ${(meanP * 100).toFixed(0)}%).`,
+      note:
+        `Найдено ${checkins.length} вопросов, включая сокращения (кд, чд, «че как»), опечатки и ${chk.vocab.phrases.length} фраз, выученных из переписки. Каждый проверен по контексту и ответу собеседника; расчётная доля ошибок — ${((1 - meanP) * 100).toFixed(0)}%.` +
+        measured(m, 'распознавания'),
     });
   }
   {
@@ -812,8 +865,14 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
   }
   {
     const cov = textMsgs ? sentimentHits / textMsgs : 0;
-    const err = Math.round(Math.min(60, Math.max(20, 65 - cov * 80)));
-    items.push({ name: 'Тональность', value: `±${err}%`, error: err, level: 'low', note: `Словарный метод: оценено ${(cov * 100).toFixed(0)}% текстовых сообщений. Сарказм, ирония и контекст не распознаются — используйте как ориентир.` });
+    if (neural) {
+      // ошибка модели (~12% на отзывах/соцсетях) + выборочная ошибка по месяцам
+      const err = Math.round(12 + 100 / Math.sqrt(Math.max(1, neuralN / Math.max(1, nMonths))));
+      items.push({ name: 'Тональность', value: `±${err}%`, error: err, level: err < 20 ? 'medium' : 'low', note: `Нейросеть rubert-tiny (локально): оценено ${neuralN} сообщений — случайная выборка по каждому месяцу и участнику. Учитывает контекст фразы лучше словаря, но сарказм по-прежнему распознаёт плохо.` });
+    } else {
+      const err = Math.round(Math.min(60, Math.max(20, 65 - cov * 80)));
+      items.push({ name: 'Тональность', value: `±${err}%`, error: err, level: 'low', note: `Словарный метод: оценено ${(cov * 100).toFixed(0)}% текстовых сообщений. Сарказм, ирония и контекст не распознаются — используйте как ориентир. Точнее — нейросетевая тональность в настройках.` });
+    }
   }
   if (reactTotal) {
     const cov = reactRecent / reactTotal;
@@ -860,6 +919,50 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
   if (topEmoji) facts.push({ icon: topEmoji[0], text: `Любимый эмодзи переписки встречается ${topEmoji[1]} раз.` });
   const topWord = top(words, 1)[0];
   if (topWord) facts.push({ icon: '🔤', text: `Самое частое значимое слово — «${topWord[0]}» (${topWord[1]} раз).` });
+
+  // ── режим сна, «прочитано», напряжённые периоды, переломные моменты ──
+  const sleep = sleepByPerson(events, peopleKeys.slice(0, 8), tp);
+  const reads = readReceipts(msgs.filter((m) => !m.service), peopleKeys.slice(0, 8));
+  const tension = findTension(events, (ts) => tp(ts).dayKey, dayKeyToIso, opts.labels?.tension);
+  const changes: Analysis['changes'] = [];
+  if (nMonths >= 8) {
+    const GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+    const fmtMonth = (i: number) => `${GEN[Number(monthKeys[i].slice(5, 7)) - 1]} ${monthKeys[i].slice(0, 4)}`;
+    const daysIn = monthKeys.map((k) => new Date(Number(k.slice(0, 4)), Number(k.slice(5, 7)), 0).getDate());
+    const msgsPerMonth = monthKeys.map((_, i) => monthly.reduce((s, row) => s + row[i], 0));
+    const lead = series[0];
+    const shareSeries = monthKeys.map((_, i) => {
+      const tot = convMonthly.reduce((s, r) => s + r[i], 0);
+      return tot >= 4 ? (convMonthly[0][i] / tot) * 100 : null;
+    });
+    const resp = monthKeys.map((_, i) => {
+      const v = responseMonthly.map((r) => r[i]).filter(Number.isFinite);
+      return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null;
+    });
+    const chkMonthly = zeros(nMonths);
+    for (const h of checkins) chkMonthly[monthKey(tp(h.ts)) - firstMonth]++;
+    const defs: { metric: string; y: (number | null)[]; fmt: (v: number) => string }[] = [
+      { metric: 'Сообщений в день', y: msgsPerMonth.map((v, i) => (v ? v / daysIn[i] : null)), fmt: (v) => v.toFixed(0) },
+      ...(lead && series.length > 1 ? [{ metric: `Доля разговоров, которые начинает ${lead.name}`, y: shareSeries, fmt: (v: number) => `${v.toFixed(0)}%` }] : []),
+      { metric: 'Среднее время ответа, мин', y: resp, fmt: (v) => v.toFixed(1) },
+      { metric: '«Люблю тебя» на 1000 сообщений', y: ilyMonthly.map((v, i) => (msgsPerMonth[i] >= 100 ? (v / msgsPerMonth[i]) * 1000 : null)), fmt: (v) => v.toFixed(1) },
+      { metric: 'Вопросов «как дела» на 1000 сообщений', y: chkMonthly.map((v, i) => (msgsPerMonth[i] >= 100 ? (v / msgsPerMonth[i]) * 1000 : null)), fmt: (v) => v.toFixed(1) },
+    ];
+    for (const d of defs) {
+      for (const cp of changePoints(d.y)) {
+        const up = cp.after > cp.before;
+        changes.push({
+          metric: d.metric,
+          month: monthKeys[cp.index],
+          before: d.fmt(cp.before),
+          after: d.fmt(cp.after),
+          up,
+          text: `С ${fmtMonth(cp.index)}: ${d.metric.toLowerCase()} ${up ? 'выросло' : 'снизилось'} — ${d.fmt(cp.before)} → ${d.fmt(cp.after)}`,
+        });
+      }
+    }
+    changes.sort((x, y) => x.month.localeCompare(y.month));
+  }
 
   const warnings = [...chat.warnings];
   for (const e of excluded)
@@ -930,11 +1033,21 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
       openingsByHour,
       durationHist: { labels: DUR_LABELS, values: durationHist },
       list: convs.map(lite),
+      model: convModel,
+      review: convs.filter((c) => c.alt && c.label === undefined && c.p > 0.3 && c.p < 0.7).map(lite),
     },
     accuracy: { overall, items },
     facts,
     warnings,
     excluded,
     checkins: checkins.slice(-5000),
+    checkinModel: chk.model,
+    checkinReview: chk.review.slice(-3000),
+    vocab: chk.vocab,
+    sleep,
+    reads,
+    tension,
+    changes,
+    hourFactor,
   };
 }

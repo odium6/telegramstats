@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Card, ChartCard, Stat, useApp } from '../components';
 import { gapOption, num, pct, sensitivityOption } from '../charts';
 import { fmtDuration } from '../../core/time';
+import { CalibrationCard } from '../insights';
 
 const LEVEL = { exact: 'Точно', high: 'Высокая', medium: 'Средняя', low: 'Ориентир' } as const;
 
@@ -13,6 +14,7 @@ export function AccuracyTab() {
   const acc = a.accuracy.overall;
   return (
     <div className="grid">
+      <CalibrationCard />
       <Card span={4} title="Общая достоверность">
         <div className="gauge solo">
           <div className="gauge-ring big" style={{ ['--p' as any]: acc, ['--c' as any]: acc > 90 ? t.series[2] : acc > 75 ? t.series[3] : t.series[7] }}>

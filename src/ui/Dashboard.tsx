@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Menu, SegmentedControl, Slider, Switch, TabBar } from 'glisse';
 import type { Analysis } from '../core/analyze';
-import type { AnalysisOptions, Chat } from '../core/types';
+import type { AnalysisOptions, Chat, Labels } from '../core/types';
+import type { useMl } from './ml';
+import type { SetLabel } from './components';
+import { ReviewMode } from './ReviewMode';
+import { MlPanel } from './MlPanel';
 import type { Collected, MediaStore } from '../core/loader';
 import { ImportMenu } from './ImportMenu';
 import { chatTypeName } from '../core/parseJson';
@@ -31,6 +35,9 @@ interface Props {
   dark: boolean;
   toggleTheme: () => void;
   addMedia: (c: Collected) => void;
+  labels: Labels;
+  setLabel: SetLabel;
+  ml: ReturnType<typeof useMl>;
 }
 
 const TABS = [
@@ -45,7 +52,8 @@ const TABS = [
 
 const toDateInput = (ts: number) => new Date(ts * 1000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 
-export function Dashboard({ chat, a, t, media, opts, setOpts, busy, onReset, dark, toggleTheme, addMedia }: Props) {
+export function Dashboard({ chat, a, t, media, opts, setOpts, busy, onReset, dark, toggleTheme, addMedia, labels, setLabel, ml }: Props) {
+  const [review, setReview] = useState(false);
   const [tab, setTab] = useState(() => (location.hash.slice(1) && TABS.some((x) => x.value === location.hash.slice(1)) ? location.hash.slice(1) : 'overview'));
   const [focusId, setFocusId] = useState<number | null>(null);
   const [settings, setSettings] = useState(false);
@@ -65,8 +73,12 @@ export function Dashboard({ chat, a, t, media, opts, setOpts, busy, onReset, dar
         setTab('messages');
       },
       openMediaPicker: () => setMediaMenu(true),
+      labels,
+      setLabel,
+      ml,
+      openReview: () => setReview(true),
     }),
-    [a, chat, t, media],
+    [a, chat, t, media, labels, setLabel, ml],
   );
 
   const chatStart = chat.messages[0]?.ts ?? 0;
@@ -227,6 +239,7 @@ export function Dashboard({ chat, a, t, media, opts, setOpts, busy, onReset, dar
                 </div>
               </div>
             )}
+            <MlPanel opts={opts} setOpts={setOpts} />
             <div className="settings-row">
               <label>Медиафайлы</label>
               <div className="inline">
@@ -260,6 +273,7 @@ export function Dashboard({ chat, a, t, media, opts, setOpts, busy, onReset, dar
         <nav className="tabbar-wrap" aria-label="Разделы">
           <TabBar items={TABS} value={tab} onValueChange={setTab} aria-label="Разделы" />
         </nav>
+        <ReviewMode open={review} onClose={() => setReview(false)} />
         <ImportMenu
           open={mediaMenu}
           mode="media"

@@ -131,18 +131,26 @@ export function clauses(text: string): Clause[] {
   return out;
 }
 
-export function core(words: string[]): string {
+/** Словарь, выученный по самой переписке (обращения и фразы этой пары). */
+export interface LearnedVocab {
+  /** обращения: «максимка», «лесечка», «заюш» */
+  address: Set<string>;
+  /** фразы-вопросы о делах → априорная вероятность */
+  phrases: Map<string, number>;
+}
+
+export function core(words: string[], extra?: Set<string>): string {
   let a = 0;
   let b = words.length;
   // ведущие вводные слова и приветствие («привет как дела»)
   for (;;) {
-    if (a < b && LEAD.has(words[a])) { a++; continue; }
+    if (a < b && (LEAD.has(words[a]) || extra?.has(words[a]))) { a++; continue; }
     const rest = words.slice(a, b).join(' ');
     const g = GREET_START.exec(rest);
     if (g && g[0].length < rest.length) { a += g[0].split(' ').length; continue; }
     break;
   }
-  while (b > a && TAIL.has(words[b - 1])) b--;
+  while (b > a && (TAIL.has(words[b - 1]) || extra?.has(words[b - 1]))) b--;
   // «ты сегодня чд», «а сейчас ты чд» — уточнения времени внутри фразы не меняют смысла
   return words
     .slice(a, b)
@@ -156,6 +164,8 @@ export interface CheckinCandidate {
   prior: number;
   phrase: string;
   abbr: boolean;
+  /** фраза выучена из этой переписки */
+  learned?: boolean;
 }
 
 /** После «чд» эти слова означают не «что делаешь», а «что делать / что будем делать». */
@@ -164,13 +174,18 @@ const ABBR_ONLY = /^(ты |вы )?(кд|чд)( ты| вы| у тебя| у ва�
 const PLANS = /(^|\s)(завтра|послезавтра|вечером|потом|на выходных|в выходные|\d+(-?го|-?е)?|понедельник\p{L}*|вторник\p{L}*|сред[уаы]|четверг\p{L}*|пятниц\p{L}*|суббот\p{L}*|воскресень\p{L}*)(?=\s|$)/u;
 
 /** Лучший кандидат на вопрос о делах в сообщении (без учёта контекста). */
-export function checkinCandidate(text: string): CheckinCandidate | null {
+export function checkinCandidate(text: string, vocab?: LearnedVocab): CheckinCandidate | null {
   if (!text || text.length > 3000) return null;
   let best: CheckinCandidate | null = null;
   for (const c of clauses(text)) {
     if (c.words.length > 9) continue;
-    const s = core(c.words);
+    const s = core(c.words, vocab?.address);
     if (!s) continue;
+    const learned = vocab?.phrases.get(s);
+    if (learned !== undefined && !CHECKIN_FULL.test(s)) {
+      if (!best || best.prior < learned) best = { prior: learned, phrase: s, abbr: false, learned: true };
+      continue;
+    }
     // «чд максимка», «чд боб» — сокращение + обращение по имени. Имени в словаре нет,
     // поэтому уверенность ниже 50 %: засчитается, только если ответ похож на ответ о делах.
     const named = /^(ты |вы |а ты )?(кд|чд) (\p{L}+)$/u.exec(s);
