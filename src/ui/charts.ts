@@ -396,8 +396,28 @@ export function gapOption(a: Analysis, t: Theme): Opt {
       },
       ...(g.separation > 0
         ? [
-            { name: 'Внутри разговора', type: 'line', showSymbol: false, smooth: true, lineStyle: { width: 2, color: t.series[2] }, itemStyle: { color: t.series[2] }, data: g.histogram.map((b) => g.w1 * pdf(b.x, g.mu1, g.sd1) * 0.1) },
-            { name: 'Между разговорами', type: 'line', showSymbol: false, smooth: true, lineStyle: { width: 2, color: t.series[1] }, itemStyle: { color: t.series[1] }, data: g.histogram.map((b) => (1 - g.w1) * pdf(b.x, g.mu2, g.sd2) * 0.1) },
+            {
+              name: 'Внутри разговора',
+              type: 'line',
+              showSymbol: false,
+              smooth: true,
+              lineStyle: { width: 2, color: t.series[2] },
+              itemStyle: { color: t.series[2] },
+              // все группы, кроме последней: очереди сообщений и паузы внутри разговора
+              data: g.histogram.map((b) => g.comps.slice(0, -1).reduce((s, c) => s + c.w * pdf(b.x, c.mu, c.sd), 0) * 0.1),
+            },
+            {
+              name: 'Между разговорами',
+              type: 'line',
+              showSymbol: false,
+              smooth: true,
+              lineStyle: { width: 2, color: t.series[1] },
+              itemStyle: { color: t.series[1] },
+              data: g.histogram.map((b) => {
+                const c = g.comps[g.comps.length - 1];
+                return c ? c.w * pdf(b.x, c.mu, c.sd) * 0.1 : 0;
+              }),
+            },
           ]
         : []),
     ],

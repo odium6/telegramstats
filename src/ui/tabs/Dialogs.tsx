@@ -90,6 +90,7 @@ export function DialogsTab() {
       <ChartCard span={8} title="Кто начинает — по месяцам" option={monthly} height={280} hint="Доля начатых разговоров в каждом месяце. Пунктир — 50%." />
       <ChartCard span={4} title="Индекс вовлечённости" option={eng} height={280} hint="Сводная оценка: 35% — инициатива, 25% — скорость ответа, 20% — доля сообщений, 20% — вопросы и интерес к делам собеседника." />
       <ChartCard span={12} title="Во сколько начинают разговоры" option={byHour} height={260} />
+      <CheckinList />
 
       <div className="kpis span-12">
         {a.people.slice(0, 6).map((p) => (
@@ -102,6 +103,66 @@ export function DialogsTab() {
       <ChartCard span={4} title="Длительность разговоров" option={durHist} height={260} />
       <ConversationList />
     </div>
+  );
+}
+
+function CheckinList() {
+  const { a, t, goToMessage } = useApp();
+  const [who, setWho] = useState('all');
+  const [mode, setMode] = useState('all');
+  const [limit, setLimit] = useState(20);
+  const [open, setOpen] = useState<number | null>(null);
+  const nameOf = (k: string) => a.people.find((p) => p.key === k)?.name ?? k;
+  const idxOf = (k: string) => a.people.find((p) => p.key === k)?.idx ?? -1;
+  const list = useMemo(() => {
+    let l = [...a.checkins].reverse();
+    if (who !== 'all') l = l.filter((h) => h.from === who);
+    if (mode === 'abbr') l = l.filter((h) => /кд|чд|как$/u.test(h.phrase));
+    if (mode === 'unsure') l = l.filter((h) => h.p < 0.75);
+    return l;
+  }, [a, who, mode]);
+  if (!a.checkins.length) return null;
+  const meanP = a.checkins.reduce((s, h) => s + h.p, 0) / a.checkins.length;
+  return (
+    <Card
+      span={12}
+      title={`Вопросы «как дела / что делаешь» · ${num(a.checkins.length)}`}
+      hint="Каждый вопрос проверяется по контексту: сама фраза (в т.ч. сокращения кд, чд, «че как»), как она сказана («и чд» в споре — риторика, «чд завтра» — о планах) и что ответил собеседник (состояние, занятие, место, встречное «а ты?»). Засчитываются вопросы с вероятностью ≥ 50 %."
+    >
+      <div className="gallery-ctrls">
+        <div className="seg-scroll">
+          <SegmentedControl aria-label="Фильтр" value={mode} onValueChange={(v) => { setMode(v); setLimit(20); }} items={[{ value: 'all', label: 'Все' }, { value: 'abbr', label: 'Сокращения' }, { value: 'unsure', label: 'Неуверенные' }]} />
+        </div>
+        {a.people.length > 1 && (
+          <select className="select small" value={who} onChange={(e) => { setWho(e.target.value); setLimit(20); }} aria-label="Кто спрашивает">
+            <option value="all">Все участники</option>
+            {a.people.slice(0, 20).map((p) => <option key={p.key} value={p.key}>{p.name} · {p.checkins}</option>)}
+          </select>
+        )}
+      </div>
+      <p className="small muted">Средняя уверенность: {pct(meanP)} — ожидаемо ≈ {num(a.checkins.length * (1 - meanP))} из {num(a.checkins.length)} могут быть ошибочными.</p>
+      <ul className="conv-list">
+        {list.slice(0, limit).map((h) => (
+          <li key={h.id} className={open === h.id ? 'open' : ''}>
+            <button className="conv-row" onClick={() => setOpen(open === h.id ? null : h.id)}>
+              <span className="conv-date">{new Date(h.ts * 1000).toLocaleString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+              <span className="conv-who">
+                <Dot color={colorOf(t, idxOf(h.from))} /> <b>{nameOf(h.from)}:</b>&nbsp;<span className="ellipsis">{h.text}</span>
+              </span>
+              <span className="conv-meta ellipsis">{h.answer ? `→ ${h.answer}` : 'без ответа'}</span>
+              <span className={`conf ${h.p > 0.8 ? 'hi' : h.p > 0.65 ? 'mid' : 'lo'}`}>{pct(h.p)}</span>
+            </button>
+            {open === h.id && (
+              <div className="conv-detail">
+                <ul>{h.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
+                <Button icon={<Icon.jump size={16} />} onClick={() => goToMessage(h.id)}>Открыть в переписке</Button>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      {list.length > limit && <Button onClick={() => setLimit(limit + 50)}>Показать ещё ({num(list.length - limit)})</Button>}
+    </Card>
   );
 }
 

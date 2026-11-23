@@ -212,6 +212,21 @@ export function Dashboard({ chat, a, t, media, opts, setOpts, busy, onReset, dar
                 </div>
               </div>
             )}
+            {chat.participants.some((p) => p.bot) && (
+              <div className="settings-row">
+                <label>
+                  Боты и посторонние
+                  <span className="muted small">
+                    {' '}
+                    — {chat.participants.filter((p) => p.bot).map((p) => `${p.name} (${p.count} сообщ., ${p.bot === 'bot' ? 'бот' : 'посторонний'})`).join(', ')}
+                  </span>
+                </label>
+                <div className="inline">
+                  <Switch aria-label="Учитывать ботов и посторонних" checked={!!opts.includeBots} onCheckedChange={(c) => setOpts({ ...opts, includeBots: c || undefined })} />
+                  <span>{opts.includeBots ? 'Учитываются в статистике' : 'Не учитываются (рекомендуется)'}</span>
+                </div>
+              </div>
+            )}
             <div className="settings-row">
               <label>Медиафайлы</label>
               <div className="inline">

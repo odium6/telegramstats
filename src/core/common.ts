@@ -13,6 +13,7 @@ export const isMissingPath = (p: unknown): boolean =>
 export function finalizeChat(
   base: Omit<Chat, 'participants' | 'mediaRefs' | 'mediaMissing'>,
   names: Map<string, string>,
+  botHints: Set<string> = new Set(),
 ): Chat {
   const messages = base.messages;
   messages.sort((a, b) => a.ts - b.ts || a.id - b.id);
@@ -36,6 +37,15 @@ export function finalizeChat(
       color: i < SERIES_LIGHT.length ? SERIES_LIGHT[i] : OTHER_COLOR,
       count,
     }));
+  // Боты: отправляли инлайн-кнопки или имя оканчивается на «bot».
+  // Посторонние: в личном чате кто-то кроме двух собеседников с долей < 1 %
+  // (например, бот или человек, случайно написавший в чат).
+  const total = participants.reduce((s, p) => s + p.count, 0) || 1;
+  const personal = /^(personal_chat|bot_chat|saved_messages|html)$/.test(base.type);
+  participants.forEach((p, i) => {
+    if (/bot$/i.test(p.name.trim()) || (botHints.has(p.key) && !(personal && i < 2))) p.bot = 'bot';
+    else if (personal && i >= 2 && p.count / total < 0.01) p.bot = 'guest';
+  });
   return { ...base, messages, participants, mediaRefs, mediaMissing };
 }
 

@@ -60,6 +60,8 @@ export interface Participant {
   name: string;
   color: string;
   count: number;
+  /** бот или посторонний участник личного чата — по умолчанию не учитывается */
+  bot?: 'bot' | 'guest';
 }
 
 export interface Chat {
@@ -95,4 +97,6 @@ export interface AnalysisOptions {
   gapOverride?: number;
   /** ограничение на участников (пусто — все) */
   people?: string[];
+  /** учитывать ботов и посторонних (по умолчанию нет) */
+  includeBots?: boolean;
 }

@@ -1,6 +1,12 @@
 import type { Msg } from './types';
 import { DELAY_RE, isCheckin, isGreeting } from './text';
 
+export interface GapComp {
+  mu: number;
+  sd: number;
+  w: number;
+}
+
 /* ───────────────────────── Кто начинает разговор ─────────────────────────
  *
  * 1. Порог разрыва диалога T определяется по самой переписке: распределение
@@ -64,6 +70,8 @@ export interface GapModel {
   separation: number; // коэффициент Ашмана D (>2 — компоненты хорошо разделены)
   quality: 'high' | 'medium' | 'low';
   histogram: { x: number; count: number }[]; // log10-гистограмма пауз
+  /** все компоненты смеси (2 или 3), по возрастанию среднего */
+  comps: GapComp[];
 }
 
 const MIN_T = 15 * 60;
@@ -72,6 +80,52 @@ const MAX_T = 6 * 3600;
 function normPdf(x: number, mu: number, sd: number) {
   const z = (x - mu) / sd;
   return Math.exp(-0.5 * z * z) / (sd * 2.5066282746);
+}
+
+/* EM для смеси k нормальных распределений на log10(пауз). */
+function fitGmm(xs: number[], init: number[]): { comps: GapComp[]; ll: number } {
+  const k = init.length;
+  const n = xs.length;
+  let comps: GapComp[] = init.map((mu) => ({ mu, sd: 0.5, w: 1 / k }));
+  const resp = new Float64Array(n * k);
+  let ll = -Infinity;
+  for (let it = 0; it < 120; it++) {
+    let newLl = 0;
+    for (let i = 0; i < n; i++) {
+      let sum = 0;
+      for (let j = 0; j < k; j++) {
+        const v = comps[j].w * normPdf(xs[i], comps[j].mu, comps[j].sd);
+        resp[i * k + j] = v;
+        sum += v;
+      }
+      if (sum <= 0) {
+        // точка далеко от всех компонент — отдаём ближайшей
+        let best = 0;
+        for (let j = 1; j < k; j++) if (Math.abs(xs[i] - comps[j].mu) < Math.abs(xs[i] - comps[best].mu)) best = j;
+        for (let j = 0; j < k; j++) resp[i * k + j] = j === best ? 1 : 0;
+        newLl += -50;
+        continue;
+      }
+      for (let j = 0; j < k; j++) resp[i * k + j] /= sum;
+      newLl += Math.log(sum);
+    }
+    const next: GapComp[] = [];
+    for (let j = 0; j < k; j++) {
+      let sw = 0;
+      let sm = 0;
+      for (let i = 0; i < n; i++) { sw += resp[i * k + j]; sm += resp[i * k + j] * xs[i]; }
+      if (sw < 2) return { comps, ll: -Infinity };
+      const mu = sm / sw;
+      let sv = 0;
+      for (let i = 0; i < n; i++) sv += resp[i * k + j] * (xs[i] - mu) ** 2;
+      next.push({ mu, sd: Math.max(0.12, Math.sqrt(sv / sw)), w: sw / n });
+    }
+    comps = next;
+    if (Math.abs(newLl - ll) < 1e-6 * n) { ll = newLl; break; }
+    ll = newLl;
+  }
+  comps.sort((a, b) => a.mu - b.mu);
+  return { comps, ll };
 }
 
 export function estimateGap(events: Msg[]): GapModel {
@@ -84,67 +138,50 @@ export function estimateGap(events: Msg[]): GapModel {
   for (let b = 0; b <= 70; b++) histogram.push({ x: b / 10, count: 0 });
   for (const l of logs) histogram[Math.min(70, Math.max(0, Math.round(l * 10)))].count++;
 
-  const fallback = (q: GapModel['quality']): GapModel => ({ T: 3600, auto: true, mu1: 1.5, mu2: 4.3, sd1: 0.6, sd2: 0.6, w1: 0.85, separation: 0, quality: q, histogram });
+  const fallback = (q: GapModel['quality']): GapModel => ({
+    T: 3600, auto: true, mu1: 1.5, mu2: 4.3, sd1: 0.6, sd2: 0.6, w1: 0.85, separation: 0, quality: q, histogram,
+    comps: [{ mu: 1.5, sd: 0.6, w: 0.85 }, { mu: 4.3, sd: 0.6, w: 0.15 }],
+  });
   if (logs.length < 40) return fallback('low');
 
-  const sorted = [...logs].sort((a, b) => a - b);
+  // для огромных переписок модель строится по равномерной выборке — так быстрее и не менее точно
+  const step = Math.max(1, Math.floor(logs.length / 60000));
+  const xs = step > 1 ? logs.filter((_, i) => i % step === 0) : logs;
+  const sorted = [...xs].sort((a, b) => a - b);
   const q = (f: number) => sorted[Math.min(sorted.length - 1, Math.floor(f * sorted.length))];
-  let mu1 = q(0.35);
-  let mu2 = Math.max(q(0.96), mu1 + 1.5);
-  let sd1 = 0.5;
-  let sd2 = 0.5;
-  let w1 = 0.85;
-  const n = logs.length;
-  const r1 = new Float64Array(n);
-  for (let it = 0; it < 80; it++) {
-    let s1 = 0;
-    for (let i = 0; i < n; i++) {
-      const a = w1 * normPdf(logs[i], mu1, sd1);
-      const b = (1 - w1) * normPdf(logs[i], mu2, sd2);
-      r1[i] = a + b > 0 ? a / (a + b) : logs[i] < (mu1 + mu2) / 2 ? 1 : 0;
-      s1 += r1[i];
-    }
-    const s2 = n - s1;
-    if (s1 < 2 || s2 < 2) break;
-    let m1 = 0;
-    let m2 = 0;
-    for (let i = 0; i < n; i++) {
-      m1 += r1[i] * logs[i];
-      m2 += (1 - r1[i]) * logs[i];
-    }
-    m1 /= s1;
-    m2 /= s2;
-    let v1 = 0;
-    let v2 = 0;
-    for (let i = 0; i < n; i++) {
-      v1 += r1[i] * (logs[i] - m1) ** 2;
-      v2 += (1 - r1[i]) * (logs[i] - m2) ** 2;
-    }
-    const nsd1 = Math.max(0.15, Math.sqrt(v1 / s1));
-    const nsd2 = Math.max(0.15, Math.sqrt(v2 / s2));
-    const conv = Math.abs(m1 - mu1) + Math.abs(m2 - mu2) < 1e-5;
-    mu1 = m1; mu2 = m2; sd1 = nsd1; sd2 = nsd2; w1 = s1 / n;
-    if (conv) break;
+  const n = xs.length;
+
+  // Две группы (внутри / между разговорами) или три (очередь сообщений / паузы
+  // внутри разговора / между разговорами) — выбирается по BIC. У активных пар
+  // паузы часто именно трёхгорбые, и двухкомпонентная модель ставит порог слишком низко.
+  const m2 = fitGmm(xs, [q(0.35), Math.max(q(0.96), q(0.35) + 1.5)]);
+  const m3 = fitGmm(xs, [q(0.25), q(0.75), Math.max(q(0.97), q(0.75) + 1)]);
+  const bic = (ll: number, k: number) => -2 * ll + (3 * k - 1) * Math.log(n);
+  const use3 = Number.isFinite(m3.ll) && bic(m3.ll, 3) < bic(m2.ll, 2) - 10 && m3.comps[2].mu - m3.comps[1].mu > 0.7;
+  const comps = use3 ? m3.comps : m2.comps;
+  if (!comps.length || !Number.isFinite(use3 ? m3.ll : m2.ll)) return fallback('low');
+
+  const hi = comps[comps.length - 1];
+  const lo = comps[comps.length - 2];
+  const separation = (Math.SQRT2 * Math.abs(hi.mu - lo.mu)) / Math.sqrt(lo.sd * lo.sd + hi.sd * hi.sd);
+  // порог — точка, где «между разговорами» становится вероятнее всех нижних групп вместе
+  let x = lo.mu;
+  for (; x < hi.mu; x += 0.005) {
+    let lower = 0;
+    for (let j = 0; j < comps.length - 1; j++) lower += comps[j].w * normPdf(x, comps[j].mu, comps[j].sd);
+    if (hi.w * normPdf(x, hi.mu, hi.sd) >= lower) break;
   }
-  if (mu1 > mu2) {
-    [mu1, mu2] = [mu2, mu1];
-    [sd1, sd2] = [sd2, sd1];
-    w1 = 1 - w1;
-  }
-  const separation = (Math.SQRT2 * Math.abs(mu2 - mu1)) / Math.sqrt(sd1 * sd1 + sd2 * sd2);
-  let x = mu1;
-  for (; x < mu2; x += 0.005) {
-    if ((1 - w1) * normPdf(x, mu2, sd2) >= w1 * normPdf(x, mu1, sd1)) break;
-  }
-  if (separation < 1.2 || !Number.isFinite(x)) return { ...fallback('low'), mu1, mu2, sd1, sd2, w1, separation };
+  const wLow = 1 - hi.w;
+  const base = { mu1: lo.mu, mu2: hi.mu, sd1: lo.sd, sd2: hi.sd, w1: wLow, separation, comps, histogram };
+  if (separation < 1.2 || !Number.isFinite(x)) return { ...fallback('low'), ...base, T: 3600 };
   const T = Math.min(MAX_T, Math.max(MIN_T, 10 ** x));
-  return { T, auto: true, mu1, mu2, sd1, sd2, w1, separation, quality: separation > 2.2 ? 'high' : 'medium', histogram };
+  return { T, auto: true, quality: separation > 2.2 ? 'high' : 'medium', ...base };
 }
 
 const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
 
 /** dayOf(ts) — номер логического дня. */
-export function segment(events: Msg[], T: number, dayOf: (ts: number) => number): Conversation[] {
+export function segment(events: Msg[], T: number, dayOf: (ts: number) => number, checkinP?: Map<number, number>): Conversation[] {
   const convs: Conversation[] = [];
   const out: Conversation[] = [];
   if (!events.length) return convs;
@@ -199,10 +236,12 @@ export function segment(events: Msg[], T: number, dayOf: (ts: number) => number)
     // открывающий блок: сообщения открывшего до первой реплики собеседника
     let openText = '';
     let replyTarget: Msg | undefined;
+    let checkinFound = 0;
     for (let i = c.start; i <= c.end && i < c.start + 8; i++) {
       const e = events[i];
       if (e.from !== c.opener) break;
       openText += '\n' + e.text;
+      checkinFound = Math.max(checkinFound, checkinP?.get(e.id) ?? 0);
       if (replyTarget === undefined && e.replyTo !== undefined) {
         const ti = idIndex.get(e.replyTo);
         if (ti !== undefined && ti < c.start) replyTarget = events[ti];
@@ -216,9 +255,28 @@ export function segment(events: Msg[], T: number, dayOf: (ts: number) => number)
     const r = c.gapBefore / T;
     let z = 0.6 + Math.min(2, 0.9 * Math.log2(Math.max(1, r)));
     const greet = isGreeting(openText);
-    const checkin = isCheckin(openText);
+    const checkinPr = checkinP ? checkinFound : isCheckin(openText) ? 0.9 : 0;
+    const checkin = checkinPr >= 0.5;
     const delay = DELAY_RE.test(openText);
     const isCall = events[c.start].kind === 'call';
+    const first = events[c.start];
+
+    // Цепочка без ответа: человек уже писал (прошлый «разговор» остался без ответа)
+    // и пишет снова — это одна попытка начать разговор, а не несколько.
+    if (!prev.responded && prev.opener === c.opener && c.gapBefore < 12 * 3600) {
+      prev.end = c.end;
+      prev.endTs = c.endTs;
+      prev.count += c.count;
+      prev.ender = c.ender;
+      prev.merged = (prev.merged ?? 0) + 1;
+      for (const k of c.participants) if (!prev.participants.includes(k)) prev.participants.push(k);
+      if (c.responded) {
+        prev.responded = true;
+        prev.firstReplySec = c.startTs - prev.startTs + (c.firstReplySec ?? 0);
+      }
+      if (!prev.reasons.includes(CHAIN)) prev.reasons.push(CHAIN);
+      continue;
+    }
 
     // Пауза чуть больше порога без приветствия/звонка — это пауза внутри
     // того же разговора, а не новый разговор: склеиваем.
@@ -243,7 +301,7 @@ export function segment(events: Msg[], T: number, dayOf: (ts: number) => number)
 
     c.reasons.push(`Пауза перед разговором ${fmt(c.gapBefore)} (порог ${fmt(T)})`);
     if (greet) { z += 1.6; c.reasons.push('Приветствие в первом сообщении'); }
-    if (checkin) { z += 1.3; c.reasons.push('Вопрос о делах / интерес к собеседнику'); }
+    if (checkin) { z += 1.3 * checkinPr; c.reasons.push(`Вопрос о делах / интерес к собеседнику (уверенность ${Math.round(checkinPr * 100)}%)`); }
     if (isCall) { z += 0.8; c.reasons.push('Разговор начался со звонка'); }
     if (/\?/.test(openText) && !delay && !replyTarget) { z += 0.4; c.reasons.push('Открывающее сообщение — вопрос'); }
     if (c.gapBefore >= 5 * 3600) z += 0.3;
@@ -265,12 +323,31 @@ export function segment(events: Msg[], T: number, dayOf: (ts: number) => number)
         z -= 1.6;
         c.reasons.push('Извинение за задержку — это продолжение, а не новый разговор');
       }
+      // Реакция на последнее сообщение собеседника («ахахах», «красиво как», «хорошо»,
+      // стикер) — это ответ, а не начало нового разговора.
+      if (!greet && !checkin && !isCall && c.gapBefore < 8 * 3600 && isReaction(first)) {
+        z -= 3.5;
+        c.reasons.push('Первое сообщение — реакция на прошлое сообщение собеседника');
+      }
     }
     if (replyTarget && replyTarget.from === c.opener) z += 0.3;
     c.p = sigmoid(z);
     out.push(c);
   }
   return out;
+}
+
+const CHAIN = 'Несколько сообщений подряд без ответа объединены в одну попытку';
+const ACK = /^(ахах\p{L}*|хах\p{L}*|хахах\p{L}*|ору|орно|жесть|капец|пипец|ого|ничего себе|нифига\p{L}*|офигеть|красиво\p{L}*|красота|класс\p{L}*|круто|прикольно|мило|миленько|умничк\p{L}*|умница|хорошо|хорошоу|хорошо\)|понял\p{L}*|поняла|ясно|понятно|ок|окей|ага|угу|да|нет|ладно|лан|лады|спасибо|спс|пон|база|согласен|согласна|точно|кайф|вау|ммм|оу|ой|блин|ееее|ееееее)[)!.?\s]*$/iu;
+const LAUGH = /^([хx]+[аaыеэ]+|[аa]+[хx]+|хв|хс|пх|сх|вх|ах|хах){2,}[)!.]*$/iu;
+
+function isReaction(m: Msg): boolean {
+  if (m.kind === 'sticker' || m.kind === 'gif') return true;
+  const t = m.text.trim().toLowerCase().replace(/ё/g, 'е');
+  if (!t) return false;
+  if (t.length <= 40 && (ACK.test(t) || LAUGH.test(t.replace(/\s/g, '')))) return true;
+  // только эмодзи / скобочки
+  return /^[\p{Extended_Pictographic}\uFE0F\u200D)(\s]+$/u.test(t);
 }
 
 function fmt(sec: number) {

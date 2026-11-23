@@ -108,6 +108,7 @@ function reactionsOf(raw: Raw): Reaction[] | undefined {
 
 export function normalizeJsonChat(raw: Raw): Chat {
   const names = new Map<string, string>();
+  const botHints = new Set<string>();
   const messages: Msg[] = [];
   const warnings: string[] = [];
   let unsupported = 0;
@@ -122,6 +123,7 @@ export function normalizeJsonChat(raw: Raw): Chat {
     const service = r.type === 'service';
     const fromKey = String((service ? r.actor_id ?? r.actor : r.from_id ?? r.from) ?? '');
     const fromName = service ? r.actor : r.from;
+    if (fromKey && !r.via_bot && Array.isArray(r.inline_bot_buttons) && r.inline_bot_buttons.length) botHints.add(fromKey);
     if (fromKey && fromName) names.set(fromKey, String(fromName));
     else if (fromKey && !names.has(fromKey)) names.set(fromKey, fromKey.startsWith('user') ? 'Удалённый аккаунт' : fromKey);
 
@@ -204,6 +206,7 @@ export function normalizeJsonChat(raw: Raw): Chat {
       warnings,
     },
     names,
+    botHints,
   );
 }
 

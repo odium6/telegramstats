@@ -2,9 +2,10 @@ import type { AnalysisOptions, Chat, Msg, MsgKind } from './types';
 import { maxOf, pushAll } from './common';
 import { makeTz, monthKey, monthKeyToIso, dayKeyToIso, fmtDuration } from './time';
 import {
-  FAREWELL_RE, LAUGH_RE, isCheckin, isGreeting, LOVE_RE, SAD_RE, SMILE_RE, STOPWORDS, SWEAR_RE,
+  APOLOGY_RE, FAREWELL_RE, ILY_RE, LAUGH_RE, MISS_RE, THANKS_RE, isGreeting, LOVE_RE, SAD_RE, SMILE_RE, STOPWORDS, SWEAR_RE,
   domainOf, emojis, sentiment, tokenize,
 } from './text';
+import { detectCheckins, type CheckinHit } from './intent';
 import { attribute, estimateGap, segment, sharesOf, type Conversation, type GapModel } from './conversations';
 
 export type Pair = [string, number];
@@ -58,6 +59,12 @@ export interface PersonStats {
   morning: number;
   goodnight: number;
   checkins: number;
+  apologies: number;
+  thanks: number;
+  missYou: number;
+  ily: number;
+  /** сколько дней этот человек первым пожелал доброе утро */
+  morningFirst: number;
   doubleTexts: number;
   maxRun: number;
   avgRun: number;
@@ -172,6 +179,10 @@ export interface Analysis {
   calls: { count: number; totalSec: number; longest: number; missed: number; byPerson: number[]; monthly: TimeSeries };
   replyMatrix: number[][];
   services: Pair[];
+  /** исключённые боты и посторонние */
+  excluded: { key: string; name: string; count: number; reason: 'bot' | 'guest' }[];
+  /** найденные вопросы «как дела / что делаешь» с вероятностью и объяснением */
+  checkins: CheckinHit[];
   conv: {
     gap: GapModel;
     T: number;
@@ -231,7 +242,11 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
   const from = opts.from ?? -Infinity;
   const to = opts.to ?? Infinity;
   const allowed = opts.people?.length ? new Set(opts.people) : null;
-  const msgs = chat.messages.filter((m) => m.ts >= from && m.ts <= to && (!allowed || allowed.has(m.from) || (m.service && m.kind !== 'call')));
+  const botKeys = new Set(opts.includeBots ? [] : chat.participants.filter((p) => p.bot).map((p) => p.key));
+  const excluded = chat.participants.filter((p) => p.bot && botKeys.has(p.key)).map((p) => ({ key: p.key, name: p.name, count: p.count, reason: p.bot! }));
+  const msgs = chat.messages.filter(
+    (m) => m.ts >= from && m.ts <= to && !botKeys.has(m.from) && (!allowed || allowed.has(m.from) || (m.service && m.kind !== 'call')),
+  );
 
   // ── серии (участники с цветами) ──
   const counts = new Map<string, number>();
@@ -313,7 +328,7 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
           emojis: 0, laughs: 0, loves: 0, swears: 0, smiles: 0, sads: 0, links: 0, edited: 0, forwarded: 0, repliesMade: 0,
           repliesReceived: 0, reactionsGiven: 0, reactionsReceived: 0, voiceSec: 0, roundSec: 0, callsMade: 0, callSec: 0,
           longest: null, firstTs: Infinity, lastTs: 0, activeDays: 0, nightShare: 0, weekendShare: 0, greetings: 0, morning: 0,
-          goodnight: 0, checkins: 0, doubleTexts: 0, maxRun: 0, avgRun: 0, uniqueWords: 0, richness: 0, caps: 0, sentiment: 0,
+          goodnight: 0, checkins: 0, apologies: 0, thanks: 0, missYou: 0, ily: 0, morningFirst: 0, doubleTexts: 0, maxRun: 0, avgRun: 0, uniqueWords: 0, richness: 0, caps: 0, sentiment: 0,
           topWords: [], topEmojis: [], topPhrases: [], response: { n: 0, median: NaN, mean: NaN, p90: NaN, fast: 0 },
           delayedAnswers: 0, unansweredQuestions: 0, engagement: 0,
         },
@@ -334,6 +349,7 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
   let callMissed = 0;
   const callsBy = zeros(S);
   let sentimentHits = 0;
+  const morningDays = new Set<number>();
   let textMsgs = 0;
   let reactRecent = 0;
   let reactTotal = 0;
@@ -459,10 +475,19 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
     ps.sads += (text.match(SAD_RE) ?? []).length;
     if (isGreeting(text)) {
       ps.greetings++;
-      if (/(добр\p{L}* утр|утречк|доброутр|good morning|morning|gm|добрий ранок|доброго ранку)/iu.test(text)) ps.morning++;
+      if (/(добр\p{L}* утр|утречк|доброутр|good morning|morning|gm|добрий ранок|доброго ранку)/iu.test(text)) {
+        ps.morning++;
+        if (!morningDays.has(p.dayKey)) {
+          morningDays.add(p.dayKey);
+          ps.morningFirst++;
+        }
+      }
     }
+    if (APOLOGY_RE.test(text)) ps.apologies++;
+    if (THANKS_RE.test(text)) ps.thanks++;
+    if (MISS_RE.test(text)) ps.missYou++;
+    if (ILY_RE.test(text)) ps.ily++;
     if (FAREWELL_RE.test(text) && /(ноч|снов|night|gn|добраніч)/iu.test(text)) ps.goodnight++;
-    if (isCheckin(text)) ps.checkins++;
     const letters = text.replace(/[^\p{L}]/gu, '');
     if (letters.length >= 4 && letters === letters.toUpperCase() && letters !== letters.toLowerCase()) ps.caps++;
     let prevTok = '';
@@ -502,7 +527,10 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
   const gap = estimateGap(events);
   const T = opts.gapOverride ?? gap.T;
   if (opts.gapOverride) gap.auto = false;
-  const convs = segment(events, T, dayOf);
+  const checkins = detectCheckins(events);
+  const checkinP = new Map(checkins.map((h) => [h.id, h.p]));
+  for (const h of checkins) personOf(h.from).ps.checkins++;
+  const convs = segment(events, T, dayOf, checkinP);
   const peopleKeys = order.map((p) => p.key);
 
   // ответы, двойные сообщения, серии
@@ -573,7 +601,7 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
 
   // чувствительность к порогу
   const sens = [0.5, 1, 2].map((f) => {
-    const cs = f === 1 ? convs : segment(events, T * f, dayOf);
+    const cs = f === 1 ? convs : segment(events, T * f, dayOf, checkinP);
     const sh = sharesOf(cs, peopleKeys);
     return { label: f === 1 ? 'T' : f < 1 ? 'T × 0.5' : 'T × 2', T: T * f, shares: peopleKeys.map((k) => sh.get(k) ?? 0) };
   });
@@ -759,6 +787,17 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
     level: convMargin < 0.05 ? 'high' : convMargin < 0.12 ? 'medium' : 'low',
     note: `95% интервал: неопределённость классификации ${N} разговоров (средняя уверенность ${(confidence * 100).toFixed(0)}%), статистическая ошибка и чувствительность к порогу паузы (${fmtDuration(T)}). Разделение «внутри/между разговорами»: ${gap.quality === 'high' ? 'чёткое' : gap.quality === 'medium' ? 'умеренное' : 'слабое — порог по умолчанию'}.`,
   });
+  if (checkins.length) {
+    const meanP = checkins.reduce((s, h) => s + h.p, 0) / checkins.length;
+    const err = (1 - meanP) * 100;
+    items.push({
+      name: 'Вопросы «как дела / что делаешь»',
+      value: `±${err.toFixed(0)}%`,
+      error: err,
+      level: err < 12 ? 'high' : err < 25 ? 'medium' : 'low',
+      note: `Найдено ${checkins.length} вопросов, включая сокращения (кд, чд, «че как») и опечатки. Каждый проверен по контексту и ответу собеседника; погрешность — ожидаемая доля ошибочно засчитанных (1 − средняя уверенность ${(meanP * 100).toFixed(0)}%).`,
+    });
+  }
   {
     const meds = [0.5, 2].map((f) => {
       const arr: number[] = [];
@@ -823,6 +862,8 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
   if (topWord) facts.push({ icon: '🔤', text: `Самое частое значимое слово — «${topWord[0]}» (${topWord[1]} раз).` });
 
   const warnings = [...chat.warnings];
+  for (const e of excluded)
+    warnings.push(`${e.name} (${e.count} сообщ.) не учитывается: ${e.reason === 'bot' ? 'это бот' : 'посторонний участник личного чата'}. Включить можно в настройках.`);
   if (gap.quality === 'low') warnings.push('Мало данных для автоматического порога паузы — использовано 60 минут. Его можно изменить в настройках.');
 
   return {
@@ -893,5 +934,7 @@ export function analyze(chat: Chat, opts: AnalysisOptions): Analysis {
     accuracy: { overall, items },
     facts,
     warnings,
+    excluded,
+    checkins: checkins.slice(-5000),
   };
 }
